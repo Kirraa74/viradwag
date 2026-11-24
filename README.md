@@ -1,0 +1,2 @@
+# Sniper-Arena
+cheat
