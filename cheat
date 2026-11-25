@@ -492,10 +492,11 @@ end
 
 cleanupPreviousUi()
 
-local function addStroke(parent, color, thickness)
+local function addStroke(parent, color, thickness, transparency)
 	local stroke = Instance.new("UIStroke")
-	stroke.Color = color or Color3.fromRGB(42, 48, 64)
+	stroke.Color = color or Color3.fromRGB(65, 76, 104)
 	stroke.Thickness = thickness or 1
+	stroke.Transparency = transparency or 0.35
 	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 	stroke.Parent = parent
 	return stroke
@@ -522,17 +523,19 @@ mainFrame.Name = "MainFrame"
 mainFrame.Size = UDim2.new(0, 620, 0, 410)
 mainFrame.Position = UDim2.new(0.5, -310, 0.5, -205)
 mainFrame.BackgroundColor3 = Color3.fromRGB(16, 19, 26)
+mainFrame.BackgroundTransparency = 0.12
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
 mainFrame.Parent = screenGui
 Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 10)
-addStroke(mainFrame, Color3.fromRGB(46, 54, 74), 1)
+addStroke(mainFrame, Color3.fromRGB(72, 84, 114), 1, 0.25)
 
 -- Шапка
 local header = Instance.new("Frame")
 header.Name = "Header"
 header.Size = UDim2.new(1, 0, 0, 46)
 header.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
+header.BackgroundTransparency = 0.16
 header.BorderSizePixel = 0
 header.Parent = mainFrame
 Instance.new("UICorner", header).CornerRadius = UDim.new(0, 10)
@@ -561,10 +564,11 @@ local counterPill = Instance.new("Frame")
 counterPill.Size = UDim2.new(0, 214, 0, 28)
 counterPill.Position = UDim2.new(1, -438, 0.5, -14)
 counterPill.BackgroundColor3 = Color3.fromRGB(28, 33, 46)
+counterPill.BackgroundTransparency = 0.2
 counterPill.BorderSizePixel = 0
 counterPill.Parent = header
 Instance.new("UICorner", counterPill).CornerRadius = UDim.new(0, 6)
-addStroke(counterPill, Color3.fromRGB(48, 57, 78), 1)
+addStroke(counterPill, Color3.fromRGB(68, 80, 108), 1, 0.35)
 
 foundLabel = Instance.new("TextLabel")
 foundLabel.Size = UDim2.new(0, 82, 1, 0)
@@ -592,6 +596,7 @@ local resetFoundBtn = Instance.new("TextButton")
 resetFoundBtn.Size = UDim2.new(0, 40, 0, 20)
 resetFoundBtn.Position = UDim2.new(1, -44, 0.5, -10)
 resetFoundBtn.BackgroundColor3 = Color3.fromRGB(45, 55, 74)
+resetFoundBtn.BackgroundTransparency = 0.12
 resetFoundBtn.Font = Enum.Font.GothamBold
 resetFoundBtn.TextSize = 10
 resetFoundBtn.TextColor3 = Color3.fromRGB(248, 250, 252)
@@ -605,10 +610,11 @@ local statusPill = Instance.new("Frame")
 statusPill.Size = UDim2.new(0, 104, 0, 28)
 statusPill.Position = UDim2.new(1, -218, 0.5, -14)
 statusPill.BackgroundColor3 = Color3.fromRGB(28, 33, 46)
+statusPill.BackgroundTransparency = 0.2
 statusPill.BorderSizePixel = 0
 statusPill.Parent = header
 Instance.new("UICorner", statusPill).CornerRadius = UDim.new(0, 6)
-addStroke(statusPill, Color3.fromRGB(48, 57, 78), 1)
+addStroke(statusPill, Color3.fromRGB(68, 80, 108), 1, 0.35)
 
 statusDot = Instance.new("Frame")
 statusDot.Size = UDim2.new(0, 7, 0, 7)
@@ -634,6 +640,7 @@ toggleRunBtn = Instance.new("TextButton")
 toggleRunBtn.Size = UDim2.new(0, 72, 0, 28)
 toggleRunBtn.Position = UDim2.new(1, -108, 0.5, -14)
 toggleRunBtn.BackgroundColor3 = Color3.fromRGB(34, 197, 94)
+toggleRunBtn.BackgroundTransparency = 0.08
 toggleRunBtn.Font = Enum.Font.GothamBold
 toggleRunBtn.TextSize = 11
 toggleRunBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -645,13 +652,14 @@ local minBtn = Instance.new("TextButton")
 minBtn.Size = UDim2.new(0, 26, 0, 28)
 minBtn.Position = UDim2.new(1, -30, 0.5, -14)
 minBtn.BackgroundColor3 = Color3.fromRGB(32, 38, 52)
+minBtn.BackgroundTransparency = 0.18
 minBtn.Font = Enum.Font.GothamBold
 minBtn.TextSize = 14
 minBtn.TextColor3 = Color3.fromRGB(226, 232, 240)
 minBtn.Text = "—"
 minBtn.Parent = header
 Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0, 6)
-addStroke(minBtn, Color3.fromRGB(48, 57, 78), 1)
+addStroke(minBtn, Color3.fromRGB(68, 80, 108), 1, 0.35)
 
 -- Перетаскивание окна
 do
@@ -697,18 +705,21 @@ local tabBar = Instance.new("Frame")
 tabBar.Size = UDim2.new(1, -24, 0, 32)
 tabBar.Position = UDim2.new(0, 12, 0, 10)
 tabBar.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
+tabBar.BackgroundTransparency = 0.2
 tabBar.Parent = bodyFrame
 Instance.new("UICorner", tabBar).CornerRadius = UDim.new(0, 7)
-addStroke(tabBar, Color3.fromRGB(40, 48, 68), 1)
+addStroke(tabBar, Color3.fromRGB(62, 74, 102), 1, 0.35)
 
 local function makeTabButton(text, index, count)
 	local btn = Instance.new("TextButton")
 	btn.Size = UDim2.new(1 / count, -4, 1, -4)
 	btn.Position = UDim2.new((index - 1) / count, 2, 0, 2)
-	btn.BackgroundColor3 = index == 1 and Color3.fromRGB(79, 70, 229) or Color3.fromRGB(28, 33, 46)
+	local active = (index == 1)
+	btn.BackgroundColor3 = active and Color3.fromRGB(79, 70, 229) or Color3.fromRGB(28, 33, 46)
+	btn.BackgroundTransparency = active and 0.1 or 0.25
 	btn.Font = Enum.Font.GothamBold
 	btn.TextSize = 11
-	btn.TextColor3 = index == 1 and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(148, 163, 184)
+	btn.TextColor3 = active and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(148, 163, 184)
 	btn.Text = text
 	btn.Parent = tabBar
 	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
@@ -755,6 +766,7 @@ local function switchTab(activeIndex)
 	for i, b in ipairs(tabs) do
 		local active = (i == activeIndex)
 		b.BackgroundColor3 = active and Color3.fromRGB(79, 70, 229) or Color3.fromRGB(28, 33, 46)
+		b.BackgroundTransparency = active and 0.1 or 0.25
 		b.TextColor3 = active and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(148, 163, 184)
 	end
 
@@ -777,38 +789,41 @@ local skinInput = Instance.new("TextBox")
 skinInput.Size = UDim2.new(0.55, -5, 1, 0)
 skinInput.Position = UDim2.new(0, 0, 0, 0)
 skinInput.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
+skinInput.BackgroundTransparency = 0.2
 skinInput.Font = Enum.Font.GothamMedium
 skinInput.TextSize = 12
 skinInput.TextColor3 = Color3.fromRGB(241, 245, 249)
-skinInput.PlaceholderColor3 = Color3.fromRGB(100, 116, 139)
+skinInput.PlaceholderColor3 = Color3.fromRGB(148, 163, 184)
 skinInput.PlaceholderText = "ID предмета (напр. Exotic.Rainbow.AWP)"
 skinInput.Text = ""
 skinInput.ClearTextOnFocus = false
 skinInput.Parent = addRow
 Instance.new("UICorner", skinInput).CornerRadius = UDim.new(0, 6)
-addStroke(skinInput, Color3.fromRGB(42, 50, 70), 1)
+addStroke(skinInput, Color3.fromRGB(65, 76, 104), 1, 0.35)
 addPadding(skinInput, 0, 10, 0, 10)
 
 local priceInput = Instance.new("TextBox")
 priceInput.Size = UDim2.new(0.21, -5, 1, 0)
 priceInput.Position = UDim2.new(0.55, 2, 0, 0)
 priceInput.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
+priceInput.BackgroundTransparency = 0.2
 priceInput.Font = Enum.Font.GothamBold
 priceInput.TextSize = 12
 priceInput.TextColor3 = Color3.fromRGB(125, 211, 252)
-priceInput.PlaceholderColor3 = Color3.fromRGB(100, 116, 139)
+priceInput.PlaceholderColor3 = Color3.fromRGB(148, 163, 184)
 priceInput.PlaceholderText = "Макс. цена"
 priceInput.Text = "2000"
 priceInput.ClearTextOnFocus = false
 priceInput.Parent = addRow
 Instance.new("UICorner", priceInput).CornerRadius = UDim.new(0, 6)
-addStroke(priceInput, Color3.fromRGB(42, 50, 70), 1)
+addStroke(priceInput, Color3.fromRGB(65, 76, 104), 1, 0.35)
 addPadding(priceInput, 0, 8, 0, 8)
 
 local addBtn = Instance.new("TextButton")
 addBtn.Size = UDim2.new(0.24, 0, 1, 0)
 addBtn.Position = UDim2.new(0.76, 0, 0, 0)
 addBtn.BackgroundColor3 = Color3.fromRGB(79, 70, 229)
+addBtn.BackgroundTransparency = 0.1
 addBtn.Font = Enum.Font.GothamBold
 addBtn.TextSize = 12
 addBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -821,9 +836,10 @@ local bulkRow = Instance.new("Frame")
 bulkRow.Size = UDim2.new(1, 0, 0, 28)
 bulkRow.Position = UDim2.new(0, 0, 0, 36)
 bulkRow.BackgroundColor3 = Color3.fromRGB(20, 24, 34)
+bulkRow.BackgroundTransparency = 0.22
 bulkRow.Parent = pageTargets
 Instance.new("UICorner", bulkRow).CornerRadius = UDim.new(0, 6)
-addStroke(bulkRow, Color3.fromRGB(36, 44, 62), 1)
+addStroke(bulkRow, Color3.fromRGB(58, 68, 94), 1, 0.35)
 
 local bulkLabel = Instance.new("TextLabel")
 bulkLabel.Size = UDim2.new(0.55, -8, 1, 0)
@@ -832,7 +848,7 @@ bulkLabel.BackgroundTransparency = 1
 bulkLabel.Font = Enum.Font.GothamMedium
 bulkLabel.TextSize = 11
 bulkLabel.TextXAlignment = Enum.TextXAlignment.Left
-bulkLabel.TextColor3 = Color3.fromRGB(148, 163, 184)
+bulkLabel.TextColor3 = Color3.fromRGB(165, 180, 204)
 bulkLabel.Text = "Цена для всех целей сразу:"
 bulkLabel.Parent = bulkRow
 
@@ -840,6 +856,7 @@ local bulkPriceInput = Instance.new("TextBox")
 bulkPriceInput.Size = UDim2.new(0.21, -5, 0, 22)
 bulkPriceInput.Position = UDim2.new(0.55, 2, 0.5, -11)
 bulkPriceInput.BackgroundColor3 = Color3.fromRGB(15, 18, 26)
+bulkPriceInput.BackgroundTransparency = 0.22
 bulkPriceInput.Font = Enum.Font.GothamBold
 bulkPriceInput.TextSize = 11
 bulkPriceInput.TextColor3 = Color3.fromRGB(125, 211, 252)
@@ -847,19 +864,20 @@ bulkPriceInput.Text = "2000"
 bulkPriceInput.ClearTextOnFocus = false
 bulkPriceInput.Parent = bulkRow
 Instance.new("UICorner", bulkPriceInput).CornerRadius = UDim.new(0, 5)
-addStroke(bulkPriceInput, Color3.fromRGB(45, 54, 76), 1)
+addStroke(bulkPriceInput, Color3.fromRGB(65, 76, 104), 1, 0.35)
 
 local bulkApplyBtn = Instance.new("TextButton")
 bulkApplyBtn.Size = UDim2.new(0.24, -4, 0, 22)
 bulkApplyBtn.Position = UDim2.new(0.76, 0, 0.5, -11)
 bulkApplyBtn.BackgroundColor3 = Color3.fromRGB(30, 58, 95)
+bulkApplyBtn.BackgroundTransparency = 0.14
 bulkApplyBtn.Font = Enum.Font.GothamBold
 bulkApplyBtn.TextSize = 11
 bulkApplyBtn.TextColor3 = Color3.fromRGB(186, 230, 253)
 bulkApplyBtn.Text = "Всем макс."
 bulkApplyBtn.Parent = bulkRow
 Instance.new("UICorner", bulkApplyBtn).CornerRadius = UDim.new(0, 5)
-addStroke(bulkApplyBtn, Color3.fromRGB(56, 98, 152), 1)
+addStroke(bulkApplyBtn, Color3.fromRGB(76, 118, 172), 1, 0.35)
 
 bulkApplyBtn.MouseButton1Click:Connect(function()
 	local newMax = tonumber(bulkPriceInput.Text)
@@ -881,12 +899,13 @@ local targetList = Instance.new("ScrollingFrame")
 targetList.Size = UDim2.new(1, 0, 1, -70)
 targetList.Position = UDim2.new(0, 0, 0, 70)
 targetList.BackgroundColor3 = Color3.fromRGB(19, 23, 33)
+targetList.BackgroundTransparency = 0.24
 targetList.ScrollBarThickness = 4
 targetList.ScrollBarImageColor3 = Color3.fromRGB(99, 102, 241)
 targetList.CanvasSize = UDim2.new(0, 0, 0, 0)
 targetList.Parent = pageTargets
 Instance.new("UICorner", targetList).CornerRadius = UDim.new(0, 7)
-addStroke(targetList, Color3.fromRGB(38, 46, 66), 1)
+addStroke(targetList, Color3.fromRGB(58, 68, 94), 1, 0.35)
 addPadding(targetList, 6, 6, 6, 6)
 
 local targetLayout = Instance.new("UIListLayout")
@@ -911,9 +930,10 @@ refreshTargetsUI = function()
 		local row = Instance.new("Frame")
 		row.Size = UDim2.new(1, -6, 0, 28)
 		row.BackgroundColor3 = Color3.fromRGB(26, 31, 43)
+		row.BackgroundTransparency = 0.22
 		row.Parent = targetList
 		Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
-		addStroke(row, Color3.fromRGB(40, 48, 68), 1)
+		addStroke(row, Color3.fromRGB(62, 74, 102), 1, 0.4)
 
 		local lbl = Instance.new("TextLabel")
 		lbl.Size = UDim2.new(1, -155, 1, 0)
@@ -931,6 +951,7 @@ refreshTargetsUI = function()
 		priceTag.Size = UDim2.new(0, 76, 0, 20)
 		priceTag.Position = UDim2.new(1, -142, 0.5, -10)
 		priceTag.BackgroundColor3 = Color3.fromRGB(20, 36, 52)
+		priceTag.BackgroundTransparency = 0.18
 		priceTag.Font = Enum.Font.GothamBold
 		priceTag.TextSize = 11
 		priceTag.TextColor3 = Color3.fromRGB(125, 211, 252)
@@ -942,6 +963,7 @@ refreshTargetsUI = function()
 		delBtn.Size = UDim2.new(0, 56, 0, 20)
 		delBtn.Position = UDim2.new(1, -62, 0.5, -10)
 		delBtn.BackgroundColor3 = Color3.fromRGB(153, 27, 27)
+		delBtn.BackgroundTransparency = 0.14
 		delBtn.Font = Enum.Font.GothamBold
 		delBtn.TextSize = 10
 		delBtn.TextColor3 = Color3.fromRGB(254, 226, 226)
@@ -985,9 +1007,10 @@ local function createToggleRow(labelText, getValue, onChange)
 	local row = Instance.new("Frame")
 	row.Size = UDim2.new(1, -6, 0, 32)
 	row.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
+	row.BackgroundTransparency = 0.2
 	row.Parent = pageSettings
 	Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
-	addStroke(row, Color3.fromRGB(38, 46, 66), 1)
+	addStroke(row, Color3.fromRGB(58, 68, 94), 1, 0.35)
 
 	local lbl = Instance.new("TextLabel")
 	lbl.Size = UDim2.new(0.7, -12, 1, 0)
@@ -1003,6 +1026,7 @@ local function createToggleRow(labelText, getValue, onChange)
 	local btn = Instance.new("TextButton")
 	btn.Size = UDim2.new(0, 76, 0, 22)
 	btn.Position = UDim2.new(1, -84, 0.5, -11)
+	btn.BackgroundTransparency = 0.1
 	btn.Font = Enum.Font.GothamBold
 	btn.TextSize = 11
 	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -1028,9 +1052,10 @@ local function createNumberRow(labelText, getValue, minVal, maxVal, onChange)
 	local row = Instance.new("Frame")
 	row.Size = UDim2.new(1, -6, 0, 32)
 	row.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
+	row.BackgroundTransparency = 0.2
 	row.Parent = pageSettings
 	Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
-	addStroke(row, Color3.fromRGB(38, 46, 66), 1)
+	addStroke(row, Color3.fromRGB(58, 68, 94), 1, 0.35)
 
 	local lbl = Instance.new("TextLabel")
 	lbl.Size = UDim2.new(0.7, -12, 1, 0)
@@ -1047,6 +1072,7 @@ local function createNumberRow(labelText, getValue, minVal, maxVal, onChange)
 	box.Size = UDim2.new(0, 86, 0, 22)
 	box.Position = UDim2.new(1, -94, 0.5, -11)
 	box.BackgroundColor3 = Color3.fromRGB(16, 20, 29)
+	box.BackgroundTransparency = 0.2
 	box.Font = Enum.Font.GothamBold
 	box.TextSize = 12
 	box.TextColor3 = Color3.fromRGB(125, 211, 252)
@@ -1054,7 +1080,7 @@ local function createNumberRow(labelText, getValue, minVal, maxVal, onChange)
 	box.ClearTextOnFocus = false
 	box.Parent = row
 	Instance.new("UICorner", box).CornerRadius = UDim.new(0, 5)
-	addStroke(box, Color3.fromRGB(48, 57, 78), 1)
+	addStroke(box, Color3.fromRGB(68, 80, 108), 1, 0.35)
 
 	local function paint()
 		box.Text = tostring(getValue())
@@ -1079,9 +1105,10 @@ do
 	local row = Instance.new("Frame")
 	row.Size = UDim2.new(1, -6, 0, 32)
 	row.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
+	row.BackgroundTransparency = 0.2
 	row.Parent = pageSettings
 	Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
-	addStroke(row, Color3.fromRGB(38, 46, 66), 1)
+	addStroke(row, Color3.fromRGB(58, 68, 94), 1, 0.35)
 
 	local lbl = Instance.new("TextLabel")
 	lbl.Size = UDim2.new(0.65, -12, 1, 0)
@@ -1098,12 +1125,13 @@ do
 	keyBtn.Size = UDim2.new(0, 110, 0, 22)
 	keyBtn.Position = UDim2.new(1, -118, 0.5, -11)
 	keyBtn.BackgroundColor3 = Color3.fromRGB(49, 46, 129)
+	keyBtn.BackgroundTransparency = 0.12
 	keyBtn.Font = Enum.Font.GothamBold
 	keyBtn.TextSize = 11
 	keyBtn.TextColor3 = Color3.fromRGB(224, 231, 255)
 	keyBtn.Parent = row
 	Instance.new("UICorner", keyBtn).CornerRadius = UDim.new(0, 5)
-	addStroke(keyBtn, Color3.fromRGB(99, 102, 241), 1)
+	addStroke(keyBtn, Color3.fromRGB(115, 118, 255), 1, 0.3)
 
 	local function paintKey()
 		keyBtn.Text = listeningHotkey and "Нажми клавишу..." or State.hotkey
@@ -1158,6 +1186,7 @@ local saveCfgBtn = Instance.new("TextButton")
 saveCfgBtn.Size = UDim2.new(0.34, -4, 1, 0)
 saveCfgBtn.Position = UDim2.new(0, 0, 0, 0)
 saveCfgBtn.BackgroundColor3 = Color3.fromRGB(79, 70, 229)
+saveCfgBtn.BackgroundTransparency = 0.1
 saveCfgBtn.Font = Enum.Font.GothamBold
 saveCfgBtn.TextSize = 11
 saveCfgBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -1169,18 +1198,20 @@ local loadCfgBtn = Instance.new("TextButton")
 loadCfgBtn.Size = UDim2.new(0.33, -4, 1, 0)
 loadCfgBtn.Position = UDim2.new(0.34, 2, 0, 0)
 loadCfgBtn.BackgroundColor3 = Color3.fromRGB(28, 33, 46)
+loadCfgBtn.BackgroundTransparency = 0.2
 loadCfgBtn.Font = Enum.Font.GothamBold
 loadCfgBtn.TextSize = 11
 loadCfgBtn.TextColor3 = Color3.fromRGB(226, 232, 240)
 loadCfgBtn.Text = "Загрузить"
 loadCfgBtn.Parent = cfgRow
 Instance.new("UICorner", loadCfgBtn).CornerRadius = UDim.new(0, 6)
-addStroke(loadCfgBtn, Color3.fromRGB(48, 57, 78), 1)
+addStroke(loadCfgBtn, Color3.fromRGB(68, 80, 108), 1, 0.35)
 
 local defaultCfgBtn = Instance.new("TextButton")
 defaultCfgBtn.Size = UDim2.new(0.33, -2, 1, 0)
 defaultCfgBtn.Position = UDim2.new(0.67, 2, 0, 0)
 defaultCfgBtn.BackgroundColor3 = Color3.fromRGB(127, 29, 29)
+defaultCfgBtn.BackgroundTransparency = 0.14
 defaultCfgBtn.Font = Enum.Font.GothamBold
 defaultCfgBtn.TextSize = 11
 defaultCfgBtn.TextColor3 = Color3.fromRGB(254, 226, 226)
@@ -1206,25 +1237,27 @@ local clearLogsBtn = Instance.new("TextButton")
 clearLogsBtn.Size = UDim2.new(0, 110, 0, 26)
 clearLogsBtn.Position = UDim2.new(1, -110, 0, 0)
 clearLogsBtn.BackgroundColor3 = Color3.fromRGB(28, 33, 46)
+clearLogsBtn.BackgroundTransparency = 0.2
 clearLogsBtn.Font = Enum.Font.GothamBold
 clearLogsBtn.TextSize = 11
 clearLogsBtn.TextColor3 = Color3.fromRGB(226, 232, 240)
 clearLogsBtn.Text = "Очистить логи"
 clearLogsBtn.Parent = pageLogs
 Instance.new("UICorner", clearLogsBtn).CornerRadius = UDim.new(0, 6)
-addStroke(clearLogsBtn, Color3.fromRGB(48, 57, 78), 1)
+addStroke(clearLogsBtn, Color3.fromRGB(68, 80, 108), 1, 0.35)
 
 logScroll = Instance.new("ScrollingFrame")
 logScroll.Size = UDim2.new(1, 0, 1, -32)
 logScroll.Position = UDim2.new(0, 0, 0, 32)
 logScroll.BackgroundColor3 = Color3.fromRGB(14, 17, 24)
+logScroll.BackgroundTransparency = 0.14
 logScroll.ScrollBarThickness = 4
 logScroll.ScrollBarImageColor3 = Color3.fromRGB(99, 102, 241)
 logScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
 logScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 logScroll.Parent = pageLogs
 Instance.new("UICorner", logScroll).CornerRadius = UDim.new(0, 7)
-addStroke(logScroll, Color3.fromRGB(38, 46, 66), 1)
+addStroke(logScroll, Color3.fromRGB(58, 68, 94), 1, 0.35)
 
 logLabel = Instance.new("TextLabel")
 logLabel.Size = UDim2.new(1, -14, 0, 0)
