@@ -7,6 +7,7 @@ local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
+local SoundService = game:GetService("SoundService")
 
 local LocalPlayer = Players.LocalPlayer
 while not LocalPlayer do
@@ -23,84 +24,127 @@ local SearchIndex = RemoteFolder:WaitForChild("SearchIndex")
 local PurchaseRemote = RemoteFolder:WaitForChild("Purchase")
 
 local CONFIG_FILE = "kirraa74_market_config.json"
+local UI_NAME = "Kirraa74MarketUI"
 local MAX_SEEN_ENTRIES = 100
+
+local DEFAULT_TARGETS = {
+	["Exotic.Rainbow.AWP"] = 2000,
+	["Exotic.Rainbow.AX-50"] = 2000,
+	["Exotic.Rainbow.Crossbow"] = 2000,
+	["Exotic.Rainbow.DSR1"] = 2000,
+	["Exotic.Rainbow.GM6"] = 2000,
+	["Exotic.Rainbow.Kar98k"] = 2000,
+	["Exotic.Rainbow.Lucas"] = 2000,
+	["Exotic.Rainbow.M200"] = 2000,
+	["Exotic.Rainbow.M82A1"] = 2000,
+	["Exotic.Rainbow.Marlin"] = 2000,
+	["Exotic.Rainbow.NTW20"] = 2000,
+	["Exotic.Rainbow.R11"] = 2000,
+	["Exotic.Rainbow.Specter"] = 2000,
+	["Exotic.Rainbow.SSG"] = 2000,
+	["Exotic.Rainbow.WA2000"] = 2000,
+	["Exotic.Rainbow.Punisher"] = 2000,
+	["Exotic.Prismatica_Solstice.M82A1"] = 6000,
+	["Exotic.Hacker.Punisher"] = 2000,
+	["Exotic.Hacker_Purple.Punisher"] = 2000,
+	["Exotic.Hacker_Red.Punisher"] = 2000,
+	["Exotic.Starborne.Punisher"] = 2000,
+	["Exotic.Eternium.Lucas"] = 2000,
+	["Exotic.Flarion.Lucas"] = 2000,
+	["Exotic.NeonCore_Cyan.NTW20"] = 2000,
+	["Exotic.NeonCore_Purple.NTW20"] = 2000,
+	["Exotic.NeonCore_Holo.NTW20"] = 2000,
+	["Exotic.Hacker.AWP"] = 2000,
+	["Exotic.Hacker_Red.AWP"] = 2000,
+	["Exotic.Hacker_Purple.AWP"] = 2000,
+	["Exotic.Hacker.M82A1"] = 2000,
+	["Exotic.Hacker_Red.M82A1"] = 2000,
+	["Exotic.Hacker_Purple.M82A1"] = 2000,
+	["Exotic.Hacker.Specter"] = 2000,
+	["Exotic.Hacker_Red.Specter"] = 2000,
+	["Exotic.Hacker_Purple.Specter"] = 2000,
+	["Exotic.Hacker.Marlin"] = 2000,
+	["Exotic.Hacker_Red.Marlin"] = 2000,
+	["Exotic.Hacker_Purple.Marlin"] = 2000,
+	["Exotic.Hacker.Wakizashi"] = 2000,
+	["Exotic.Hacker_Red.Wakizashi"] = 2000,
+	["Exotic.Hacker_Purple.Wakizashi"] = 2000,
+	["Exotic.Hacker.Karambit"] = 2000,
+	["Exotic.Hacker_Red.Karambit"] = 2000,
+	["Exotic.Hacker_Purple.Karambit"] = 2000,
+	["Exotic.Hacker.Glove"] = 2000,
+	["Exotic.Hacker_Red.Glove"] = 2000,
+	["Exotic.Hacker_Purple.Glove"] = 2000,
+}
+
+local function cloneTargets(src)
+	local copy = {}
+	for k, v in pairs(src) do
+		copy[k] = v
+	end
+	return copy
+end
+
+-- Уникальный ID запуска для защиты от дублирующих циклов
+local RUN_TOKEN = HttpService:GenerateGUID(false)
+getgenv().KIRRAA74_MARKET_TOKEN = RUN_TOKEN
+
+local function isActiveInstance()
+	return getgenv().KIRRAA74_MARKET_TOKEN == RUN_TOKEN
+end
 
 local State = {
 	running = false,
 	autoBuy = true,
 	autoTeleport = true,
+	soundAlert = true,
 	skinDelay = 2.5,
 	loopDelay = 3.0,
 	tpWait = 5.0,
+	tpCooldown = 90,
+	buyRetries = 1,
 	minPrice = 1,
+	prioritySkin = nil,
 	foundCount = 0,
+	boughtCount = 0,
+	hotkey = "RightShift",
 	seenEntries = {},
 	seenOrder = {},
-	targets = {
-		["Exotic.Rainbow.AWP"] = 2000,
-["Exotic.Rainbow.AX-50"] = 2000,
-["Exotic.Rainbow.Crossbow"] = 2000,
-["Exotic.Rainbow.DSR1"] = 2000,
-["Exotic.Rainbow.GM6"] = 2000,
-["Exotic.Rainbow.Kar98k"] = 2000,
-["Exotic.Rainbow.Lucas"] = 2000,
-["Exotic.Rainbow.M200"] = 2000,
-["Exotic.Rainbow.M82A1"] = 2000,
-["Exotic.Rainbow.Marlin"] = 2000,
-["Exotic.Rainbow.NTW20"] = 2000,
-["Exotic.Rainbow.R11"] = 2000,
-["Exotic.Rainbow.Specter"] = 2000,
-["Exotic.Rainbow.SSG"] = 2000,
-["Exotic.Rainbow.WA2000"] = 2000,
-["Exotic.Rainbow.Punisher"] = 2000,
-["Exotic.Prismatica_Solstice.M82A1"] = 6000,
-["Exotic.Hacker.Punisher"] = 2000,
-["Exotic.Hacker_Purple.Punisher"] = 2000,
-["Exotic.Hacker_Red.Punisher"] = 2000,
-["Exotic.Starborne.Punisher"] = 2000,
-["Exotic.Eternium.Lucas"] = 2000,
-["Exotic.Flarion.Lucas"] = 2000,
-["Exotic.NeonCore_Cyan.NTW20"] = 2000,
-["Exotic.NeonCore_Purple.NTW20"] = 2000,
-["Exotic.NeonCore_Holo.NTW20"] = 2000,
-["Exotic.Hacker.AWP"] = 2000,
-["Exotic.Hacker_Red.AWP"] = 2000,
-["Exotic.Hacker_Purple.AWP"] = 2000,
-["Exotic.Hacker.M82A1"] = 2000,
-["Exotic.Hacker_Red.M82A1"] = 2000,
-["Exotic.Hacker_Purple.M82A1"] = 2000,
-["Exotic.Hacker.Specter"] = 2000,
-["Exotic.Hacker_Red.Specter"] = 2000,
-["Exotic.Hacker_Purple.Specter"] = 2000,
-["Exotic.Hacker.Marlin"] = 2000,
-["Exotic.Hacker_Red.Marlin"] = 2000,
-["Exotic.Hacker_Purple.Marlin"] = 2000,
-["Exotic.Hacker.Wakizashi"] = 2000,
-["Exotic.Hacker_Red.Wakizashi"] = 2000,
-["Exotic.Hacker_Purple.Wakizashi"] = 2000,
-["Exotic.Hacker.Karambit"] = 2000,
-["Exotic.Hacker_Red.Karambit"] = 2000,
-["Exotic.Hacker_Purple.Karambit"] = 2000,
-["Exotic.Hacker.Glove"] = 2000,
-["Exotic.Hacker_Red.Glove"] = 2000,
-["Exotic.Hacker_Purple.Glove"] = 2000,
-["Exotic.Hacker.Glove"] = 2000,
-
-
-    },
+	badJobIds = {},
+	targets = cloneTargets(DEFAULT_TARGETS),
 }
 
-
 local logLabel
+local logScroll
+local pageLogs
 local statusLabel
+local statusDot
 local foundLabel
+local boughtLabel
 local toggleRunBtn
 local refreshTargetsUI
 local settingsRefreshers = {}
 
-local function updateFoundCounter()
+local alertSound = Instance.new("Sound")
+alertSound.Name = "Kirraa74BuyAlert"
+alertSound.SoundId = "rbxassetid://4590662766"
+alertSound.Volume = 0.6
+alertSound.Parent = SoundService
+
+local function playAlert()
+	if State.soundAlert and isActiveInstance() then
+		pcall(function()
+			alertSound:Play()
+		end)
+	end
+end
+
+local function updateCounters()
 	if foundLabel then
 		foundLabel.Text = "Найдено: " .. tostring(State.foundCount)
+	end
+	if boughtLabel then
+		boughtLabel.Text = "Куплено: " .. tostring(State.boughtCount)
 	end
 end
 
@@ -110,7 +154,20 @@ local function refreshSettingsUI()
 	end
 end
 
+local function scrollLogsToBottom()
+	if logScroll and pageLogs and pageLogs.Visible then
+		task.defer(function()
+			if logScroll and isActiveInstance() then
+				logScroll.CanvasPosition = Vector2.new(0, math.max(0, logScroll.AbsoluteCanvasSize.Y))
+			end
+		end)
+	end
+end
+
 local function pushLog(text)
+	if not isActiveInstance() then
+		return
+	end
 	local stamp = os.date("%H:%M:%S")
 	local line = string.format("[%s] %s", stamp, tostring(text))
 	print(line)
@@ -121,19 +178,26 @@ local function pushLog(text)
 			logLabel.Text = logLabel.Text .. "\n" .. line
 		end
 		local lines = string.split(logLabel.Text, "\n")
-		if #lines > 120 then
+		if #lines > 140 then
 			table.remove(lines, 1)
 			logLabel.Text = table.concat(lines, "\n")
 		end
+		scrollLogsToBottom()
 	end
 end
 
 local function setStatus(text, color)
+	if not isActiveInstance() then
+		return
+	end
 	if statusLabel then
 		statusLabel.Text = text
 		if color then
 			statusLabel.TextColor3 = color
 		end
+	end
+	if statusDot and color then
+		statusDot.BackgroundColor3 = color
 	end
 end
 
@@ -156,6 +220,24 @@ local function markEntrySeen(entryKey)
 	return true
 end
 
+local function isJobCoolingDown(jobId)
+	local untilTime = State.badJobIds[jobId]
+	if not untilTime then
+		return false
+	end
+	if os.clock() >= untilTime then
+		State.badJobIds[jobId] = nil
+		return false
+	end
+	return true
+end
+
+local function markJobBad(jobId)
+	if type(jobId) == "string" and jobId ~= "" then
+		State.badJobIds[jobId] = os.clock() + State.tpCooldown
+	end
+end
+
 local function saveConfig(overrideRunning)
 	if not hasFileIO() then
 		return
@@ -163,12 +245,18 @@ local function saveConfig(overrideRunning)
 	local payload = {
 		running = (overrideRunning ~= nil) and overrideRunning or State.running,
 		foundCount = State.foundCount,
+		boughtCount = State.boughtCount,
+		prioritySkin = State.prioritySkin,
+		hotkey = State.hotkey,
 		seenOrder = State.seenOrder,
 		autoBuy = State.autoBuy,
 		autoTeleport = State.autoTeleport,
+		soundAlert = State.soundAlert,
 		skinDelay = State.skinDelay,
 		loopDelay = State.loopDelay,
 		tpWait = State.tpWait,
+		tpCooldown = State.tpCooldown,
+		buyRetries = State.buyRetries,
 		minPrice = State.minPrice,
 		targets = State.targets,
 	}
@@ -180,20 +268,59 @@ end
 
 local function setRunning(val, shouldSave)
 	State.running = val
-	if toggleRunBtn then
+	if toggleRunBtn and isActiveInstance() then
 		if State.running then
-			toggleRunBtn.Text = "STOP"
-			toggleRunBtn.BackgroundColor3 = Color3.fromRGB(185, 58, 65)
-			setStatus("RUNNING", Color3.fromRGB(85, 220, 130))
+			toggleRunBtn.Text = "СТОП"
+			toggleRunBtn.BackgroundColor3 = Color3.fromRGB(214, 69, 80)
+			setStatus("ПОИСК", Color3.fromRGB(74, 222, 128))
 		else
-			toggleRunBtn.Text = "START"
-			toggleRunBtn.BackgroundColor3 = Color3.fromRGB(46, 160, 98)
-			setStatus("STOPPED", Color3.fromRGB(160, 170, 190))
+			toggleRunBtn.Text = "СТАРТ"
+			toggleRunBtn.BackgroundColor3 = Color3.fromRGB(34, 197, 94)
+			setStatus("ПАУЗА", Color3.fromRGB(148, 163, 184))
 		end
 	end
 	if shouldSave then
 		saveConfig()
 	end
+end
+
+local function resetFoundCounter()
+	State.foundCount = 0
+	State.boughtCount = 0
+	State.seenEntries = {}
+	State.seenOrder = {}
+	State.badJobIds = {}
+	updateCounters()
+	saveConfig()
+	pushLog("Счётчики и кэш сброшены")
+end
+
+local function resetToDefaultConfig()
+	State.autoBuy = true
+	State.autoTeleport = true
+	State.soundAlert = true
+	State.skinDelay = 2.5
+	State.loopDelay = 3.0
+	State.tpWait = 5.0
+	State.tpCooldown = 90
+	State.buyRetries = 1
+	State.minPrice = 1
+	State.prioritySkin = nil
+	State.foundCount = 0
+	State.boughtCount = 0
+	State.hotkey = "RightShift"
+	State.seenEntries = {}
+	State.seenOrder = {}
+	State.badJobIds = {}
+	State.targets = cloneTargets(DEFAULT_TARGETS)
+
+	if refreshTargetsUI then
+		refreshTargetsUI()
+	end
+	refreshSettingsUI()
+	updateCounters()
+	saveConfig()
+	pushLog("Настройки и список целей сброшены к стандартным")
 end
 
 local function loadConfig()
@@ -212,11 +339,21 @@ local function loadConfig()
 	if dOk and type(decoded) == "table" then
 		if type(decoded.autoBuy) == "boolean" then State.autoBuy = decoded.autoBuy end
 		if type(decoded.autoTeleport) == "boolean" then State.autoTeleport = decoded.autoTeleport end
+		if type(decoded.soundAlert) == "boolean" then State.soundAlert = decoded.soundAlert end
 		if tonumber(decoded.skinDelay) then State.skinDelay = math.max(0.05, tonumber(decoded.skinDelay)) end
 		if tonumber(decoded.loopDelay) then State.loopDelay = math.max(0.05, tonumber(decoded.loopDelay)) end
 		if tonumber(decoded.tpWait) then State.tpWait = math.max(1, tonumber(decoded.tpWait)) end
+		if tonumber(decoded.tpCooldown) then State.tpCooldown = math.max(5, tonumber(decoded.tpCooldown)) end
+		if tonumber(decoded.buyRetries) then State.buyRetries = math.clamp(math.floor(tonumber(decoded.buyRetries)), 0, 5) end
 		if tonumber(decoded.minPrice) then State.minPrice = math.max(0, tonumber(decoded.minPrice)) end
+		if type(decoded.prioritySkin) == "string" and decoded.prioritySkin ~= "" then
+			State.prioritySkin = decoded.prioritySkin
+		end
 		if tonumber(decoded.foundCount) then State.foundCount = math.max(0, tonumber(decoded.foundCount)) end
+		if tonumber(decoded.boughtCount) then State.boughtCount = math.max(0, tonumber(decoded.boughtCount)) end
+		if type(decoded.hotkey) == "string" and Enum.KeyCode[decoded.hotkey] then
+			State.hotkey = decoded.hotkey
+		end
 
 		if type(decoded.seenOrder) == "table" then
 			State.seenEntries = {}
@@ -245,27 +382,59 @@ local function loadConfig()
 			refreshTargetsUI()
 		end
 		refreshSettingsUI()
-		updateFoundCounter()
+		updateCounters()
 
 		local wasRunning = decoded.running == true
-		pushLog("Config загружен | Найдено: " .. tostring(State.foundCount))
+		pushLog(string.format("Конфиг загружен | Найдено: %d | Куплено: %d", State.foundCount, State.boughtCount))
+		if State.prioritySkin then
+			pushLog("Приоритет после телепорта: " .. State.prioritySkin)
+		end
 		return wasRunning
 	end
 	return false
+end
+
+local function getSellerName(item)
+	if typeof(item.Seller) == "Instance" then
+		return item.Seller.Name
+	end
+	for _, field in ipairs({ "SellerName", "SellerDisplayName", "OwnerName", "PlayerName", "Username", "Seller" }) do
+		if type(item[field]) == "string" and item[field] ~= "" then
+			return item[field]
+		end
+	end
+	for _, idField in ipairs({ "SellerUserId", "OwnerId", "UserId", "PlayerId" }) do
+		local uid = tonumber(item[idField])
+		if uid then
+			local plr = Players:GetPlayerByUserId(uid)
+			if plr then
+				return plr.Name
+			end
+			return "ID:" .. tostring(uid)
+		end
+	end
+	return "Неизвестно"
 end
 
 local function findSellerPlayer(item)
 	if typeof(item.Seller) == "Instance" and item.Seller:IsA("Player") then
 		return item.Seller
 	end
-	if item.SellerUserId ~= nil then
-		local uid = tonumber(item.SellerUserId)
-		if uid then
-			return Players:GetPlayerByUserId(uid)
+	for _, idField in ipairs({ "SellerUserId", "OwnerId", "UserId", "PlayerId" }) do
+		if item[idField] ~= nil then
+			local uid = tonumber(item[idField])
+			if uid then
+				return Players:GetPlayerByUserId(uid)
+			end
 		end
 	end
-	if type(item.SellerName) == "string" then
-		return Players:FindFirstChild(item.SellerName)
+	for _, nameField in ipairs({ "SellerName", "OwnerName", "PlayerName", "Seller" }) do
+		if type(item[nameField]) == "string" then
+			local plr = Players:FindFirstChild(item[nameField])
+			if plr then
+				return plr
+			end
+		end
 	end
 	return nil
 end
@@ -282,7 +451,7 @@ local function invokeTeleport(jobId)
 	TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId, LocalPlayer)
 end
 
--- Построение UI (автор: Kirraa74)
+-- Удаление старых экземпляров UI перед запуском (Single Instance)
 local function getUiParent()
 	local coreOk, coreGui = pcall(function()
 		return game:GetService("CoreGui")
@@ -300,103 +469,189 @@ local function getUiParent()
 	return LocalPlayer:WaitForChild("PlayerGui")
 end
 
+local function cleanupPreviousUi()
+	local parent = getUiParent()
+	for _, obj in ipairs(parent:GetChildren()) do
+		if obj.Name == UI_NAME then
+			pcall(function()
+				obj:Destroy()
+			end)
+		end
+	end
+	local pg = LocalPlayer:FindFirstChild("PlayerGui")
+	if pg then
+		for _, obj in ipairs(pg:GetChildren()) do
+			if obj.Name == UI_NAME then
+				pcall(function()
+					obj:Destroy()
+				end)
+			end
+		end
+	end
+end
+
+cleanupPreviousUi()
+
+local function addStroke(parent, color, thickness)
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = color or Color3.fromRGB(42, 48, 64)
+	stroke.Thickness = thickness or 1
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = parent
+	return stroke
+end
+
+local function addPadding(parent, top, right, bottom, left)
+	local pad = Instance.new("UIPadding")
+	pad.PaddingTop = UDim.new(0, top or 0)
+	pad.PaddingRight = UDim.new(0, right or 0)
+	pad.PaddingBottom = UDim.new(0, bottom or 0)
+	pad.PaddingLeft = UDim.new(0, left or 0)
+	pad.Parent = parent
+	return pad
+end
+
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "Kirraa74MarketUI"
+screenGui.Name = UI_NAME
 screenGui.ResetOnSpawn = false
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screenGui.Parent = getUiParent()
 
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 580, 0, 390)
-mainFrame.Position = UDim2.new(0.5, -290, 0.5, -195)
-mainFrame.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
+mainFrame.Size = UDim2.new(0, 620, 0, 410)
+mainFrame.Position = UDim2.new(0.5, -310, 0.5, -205)
+mainFrame.BackgroundColor3 = Color3.fromRGB(16, 19, 26)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
 mainFrame.Parent = screenGui
-
-local mainCorner = Instance.new("UICorner")
-mainCorner.CornerRadius = UDim.new(0, 10)
-mainCorner.Parent = mainFrame
-
-local mainStroke = Instance.new("UIStroke")
-mainStroke.Color = Color3.fromRGB(52, 58, 74)
-mainStroke.Thickness = 1
-mainStroke.Parent = mainFrame
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 10)
+addStroke(mainFrame, Color3.fromRGB(46, 54, 74), 1)
 
 -- Шапка
 local header = Instance.new("Frame")
 header.Name = "Header"
-header.Size = UDim2.new(1, 0, 0, 44)
-header.BackgroundColor3 = Color3.fromRGB(28, 31, 40)
+header.Size = UDim2.new(1, 0, 0, 46)
+header.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
 header.BorderSizePixel = 0
 header.Parent = mainFrame
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 10)
 
-local headerCorner = Instance.new("UICorner")
-headerCorner.CornerRadius = UDim.new(0, 10)
-headerCorner.Parent = header
+local accentBar = Instance.new("Frame")
+accentBar.Size = UDim2.new(0, 3, 0, 20)
+accentBar.Position = UDim2.new(0, 12, 0.5, -10)
+accentBar.BackgroundColor3 = Color3.fromRGB(99, 102, 241)
+accentBar.BorderSizePixel = 0
+accentBar.Parent = header
+Instance.new("UICorner", accentBar).CornerRadius = UDim.new(1, 0)
 
 local titleLabel = Instance.new("TextLabel")
-titleLabel.Size = UDim2.new(0, 215, 1, 0)
-titleLabel.Position = UDim2.new(0, 14, 0, 0)
+titleLabel.Size = UDim2.new(0, 155, 1, 0)
+titleLabel.Position = UDim2.new(0, 22, 0, 0)
 titleLabel.BackgroundTransparency = 1
 titleLabel.Font = Enum.Font.GothamBold
-titleLabel.TextSize = 13
+titleLabel.TextSize = 12
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-titleLabel.TextColor3 = Color3.fromRGB(240, 244, 255)
-titleLabel.Text = "Market Controller | by Kirraa74"
+titleLabel.TextColor3 = Color3.fromRGB(241, 245, 249)
+titleLabel.Text = "KIRRAA74 // МАРКЕТ"
 titleLabel.Parent = header
 
+-- Счётчики + Сброс
+local counterPill = Instance.new("Frame")
+counterPill.Size = UDim2.new(0, 214, 0, 28)
+counterPill.Position = UDim2.new(1, -438, 0.5, -14)
+counterPill.BackgroundColor3 = Color3.fromRGB(28, 33, 46)
+counterPill.BorderSizePixel = 0
+counterPill.Parent = header
+Instance.new("UICorner", counterPill).CornerRadius = UDim.new(0, 6)
+addStroke(counterPill, Color3.fromRGB(48, 57, 78), 1)
+
 foundLabel = Instance.new("TextLabel")
-foundLabel.Size = UDim2.new(0, 95, 1, 0)
-foundLabel.Position = UDim2.new(1, -335, 0, 0)
+foundLabel.Size = UDim2.new(0, 82, 1, 0)
+foundLabel.Position = UDim2.new(0, 8, 0, 0)
 foundLabel.BackgroundTransparency = 1
 foundLabel.Font = Enum.Font.GothamBold
-foundLabel.TextSize = 12
-foundLabel.TextXAlignment = Enum.TextXAlignment.Right
-foundLabel.TextColor3 = Color3.fromRGB(120, 215, 255)
+foundLabel.TextSize = 11
+foundLabel.TextXAlignment = Enum.TextXAlignment.Left
+foundLabel.TextColor3 = Color3.fromRGB(125, 211, 252)
 foundLabel.Text = "Найдено: 0"
-foundLabel.Parent = header
+foundLabel.Parent = counterPill
+
+boughtLabel = Instance.new("TextLabel")
+boughtLabel.Size = UDim2.new(0, 80, 1, 0)
+boughtLabel.Position = UDim2.new(0, 90, 0, 0)
+boughtLabel.BackgroundTransparency = 1
+boughtLabel.Font = Enum.Font.GothamBold
+boughtLabel.TextSize = 11
+boughtLabel.TextXAlignment = Enum.TextXAlignment.Left
+boughtLabel.TextColor3 = Color3.fromRGB(74, 222, 128)
+boughtLabel.Text = "Куплено: 0"
+boughtLabel.Parent = counterPill
+
+local resetFoundBtn = Instance.new("TextButton")
+resetFoundBtn.Size = UDim2.new(0, 40, 0, 20)
+resetFoundBtn.Position = UDim2.new(1, -44, 0.5, -10)
+resetFoundBtn.BackgroundColor3 = Color3.fromRGB(45, 55, 74)
+resetFoundBtn.Font = Enum.Font.GothamBold
+resetFoundBtn.TextSize = 10
+resetFoundBtn.TextColor3 = Color3.fromRGB(248, 250, 252)
+resetFoundBtn.Text = "Сброс"
+resetFoundBtn.Parent = counterPill
+Instance.new("UICorner", resetFoundBtn).CornerRadius = UDim.new(0, 5)
+resetFoundBtn.MouseButton1Click:Connect(resetFoundCounter)
+
+-- Статус
+local statusPill = Instance.new("Frame")
+statusPill.Size = UDim2.new(0, 104, 0, 28)
+statusPill.Position = UDim2.new(1, -218, 0.5, -14)
+statusPill.BackgroundColor3 = Color3.fromRGB(28, 33, 46)
+statusPill.BorderSizePixel = 0
+statusPill.Parent = header
+Instance.new("UICorner", statusPill).CornerRadius = UDim.new(0, 6)
+addStroke(statusPill, Color3.fromRGB(48, 57, 78), 1)
+
+statusDot = Instance.new("Frame")
+statusDot.Size = UDim2.new(0, 7, 0, 7)
+statusDot.Position = UDim2.new(0, 9, 0.5, -3.5)
+statusDot.BackgroundColor3 = Color3.fromRGB(148, 163, 184)
+statusDot.BorderSizePixel = 0
+statusDot.Parent = statusPill
+Instance.new("UICorner", statusDot).CornerRadius = UDim.new(1, 0)
 
 statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(0, 140, 1, 0)
-statusLabel.Position = UDim2.new(1, -230, 0, 0)
+statusLabel.Size = UDim2.new(1, -22, 1, 0)
+statusLabel.Position = UDim2.new(0, 20, 0, 0)
 statusLabel.BackgroundTransparency = 1
-statusLabel.Font = Enum.Font.GothamSemibold
-statusLabel.TextSize = 12
-statusLabel.TextXAlignment = Enum.TextXAlignment.Right
+statusLabel.Font = Enum.Font.GothamBold
+statusLabel.TextSize = 10
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 statusLabel.TextTruncate = Enum.TextTruncate.AtEnd
-statusLabel.TextColor3 = Color3.fromRGB(160, 170, 190)
-statusLabel.Text = "STOPPED"
-statusLabel.Parent = header
+statusLabel.TextColor3 = Color3.fromRGB(148, 163, 184)
+statusLabel.Text = "ПАУЗА"
+statusLabel.Parent = statusPill
 
 toggleRunBtn = Instance.new("TextButton")
-toggleRunBtn.Size = UDim2.new(0, 56, 0, 26)
-toggleRunBtn.Position = UDim2.new(1, -82, 0.5, -13)
-toggleRunBtn.BackgroundColor3 = Color3.fromRGB(46, 160, 98)
+toggleRunBtn.Size = UDim2.new(0, 72, 0, 28)
+toggleRunBtn.Position = UDim2.new(1, -108, 0.5, -14)
+toggleRunBtn.BackgroundColor3 = Color3.fromRGB(34, 197, 94)
 toggleRunBtn.Font = Enum.Font.GothamBold
-toggleRunBtn.TextSize = 12
+toggleRunBtn.TextSize = 11
 toggleRunBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-toggleRunBtn.Text = "START"
+toggleRunBtn.Text = "СТАРТ"
 toggleRunBtn.Parent = header
-
-local runBtnCorner = Instance.new("UICorner")
-runBtnCorner.CornerRadius = UDim.new(0, 6)
-runBtnCorner.Parent = toggleRunBtn
+Instance.new("UICorner", toggleRunBtn).CornerRadius = UDim.new(0, 6)
 
 local minBtn = Instance.new("TextButton")
-minBtn.Size = UDim2.new(0, 20, 0, 26)
-minBtn.Position = UDim2.new(1, -22, 0.5, -13)
-minBtn.BackgroundColor3 = Color3.fromRGB(42, 46, 58)
+minBtn.Size = UDim2.new(0, 26, 0, 28)
+minBtn.Position = UDim2.new(1, -30, 0.5, -14)
+minBtn.BackgroundColor3 = Color3.fromRGB(32, 38, 52)
 minBtn.Font = Enum.Font.GothamBold
 minBtn.TextSize = 14
-minBtn.TextColor3 = Color3.fromRGB(220, 225, 240)
-minBtn.Text = "-"
+minBtn.TextColor3 = Color3.fromRGB(226, 232, 240)
+minBtn.Text = "—"
 minBtn.Parent = header
-
-local minBtnCorner = Instance.new("UICorner")
-minBtnCorner.CornerRadius = UDim.new(0, 6)
-minBtnCorner.Parent = minBtn
+Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0, 6)
+addStroke(minBtn, Color3.fromRGB(48, 57, 78), 1)
 
 -- Перетаскивание окна
 do
@@ -433,45 +688,40 @@ end
 
 -- Тело окна и вкладки
 local bodyFrame = Instance.new("Frame")
-bodyFrame.Size = UDim2.new(1, 0, 1, -44)
-bodyFrame.Position = UDim2.new(0, 0, 0, 44)
+bodyFrame.Size = UDim2.new(1, 0, 1, -46)
+bodyFrame.Position = UDim2.new(0, 0, 0, 46)
 bodyFrame.BackgroundTransparency = 1
 bodyFrame.Parent = mainFrame
 
 local tabBar = Instance.new("Frame")
-tabBar.Size = UDim2.new(1, -20, 0, 32)
-tabBar.Position = UDim2.new(0, 10, 0, 8)
-tabBar.BackgroundColor3 = Color3.fromRGB(26, 29, 37)
+tabBar.Size = UDim2.new(1, -24, 0, 32)
+tabBar.Position = UDim2.new(0, 12, 0, 10)
+tabBar.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
 tabBar.Parent = bodyFrame
-
-local tabBarCorner = Instance.new("UICorner")
-tabBarCorner.CornerRadius = UDim.new(0, 7)
-tabBarCorner.Parent = tabBar
+Instance.new("UICorner", tabBar).CornerRadius = UDim.new(0, 7)
+addStroke(tabBar, Color3.fromRGB(40, 48, 68), 1)
 
 local function makeTabButton(text, index, count)
 	local btn = Instance.new("TextButton")
 	btn.Size = UDim2.new(1 / count, -4, 1, -4)
 	btn.Position = UDim2.new((index - 1) / count, 2, 0, 2)
-	btn.BackgroundColor3 = index == 1 and Color3.fromRGB(58, 92, 168) or Color3.fromRGB(34, 38, 48)
-	btn.Font = Enum.Font.GothamSemibold
-	btn.TextSize = 12
-	btn.TextColor3 = Color3.fromRGB(240, 242, 248)
+	btn.BackgroundColor3 = index == 1 and Color3.fromRGB(79, 70, 229) or Color3.fromRGB(28, 33, 46)
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 11
+	btn.TextColor3 = index == 1 and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(148, 163, 184)
 	btn.Text = text
 	btn.Parent = tabBar
-
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(0, 6)
-	c.Parent = btn
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
 	return btn
 end
 
-local tabTargetsBtn = makeTabButton("Targets", 1, 3)
-local tabSettingsBtn = makeTabButton("Settings", 2, 3)
-local tabLogsBtn = makeTabButton("Logs", 3, 3)
+local tabTargetsBtn = makeTabButton("Цели", 1, 3)
+local tabSettingsBtn = makeTabButton("Настройки", 2, 3)
+local tabLogsBtn = makeTabButton("Логи", 3, 3)
 
 local pagesContainer = Instance.new("Frame")
-pagesContainer.Size = UDim2.new(1, -20, 1, -48)
-pagesContainer.Position = UDim2.new(0, 10, 0, 44)
+pagesContainer.Size = UDim2.new(1, -24, 1, -54)
+pagesContainer.Position = UDim2.new(0, 12, 0, 48)
 pagesContainer.BackgroundTransparency = 1
 pagesContainer.Parent = bodyFrame
 
@@ -485,11 +735,12 @@ local pageSettings = Instance.new("ScrollingFrame")
 pageSettings.Size = UDim2.new(1, 0, 1, 0)
 pageSettings.BackgroundTransparency = 1
 pageSettings.ScrollBarThickness = 4
-pageSettings.CanvasSize = UDim2.new(0, 0, 0, 390)
+pageSettings.ScrollBarImageColor3 = Color3.fromRGB(99, 102, 241)
+pageSettings.CanvasSize = UDim2.new(0, 0, 0, 500)
 pageSettings.Visible = false
 pageSettings.Parent = pagesContainer
 
-local pageLogs = Instance.new("Frame")
+pageLogs = Instance.new("Frame")
 pageLogs.Size = UDim2.new(1, 0, 1, 0)
 pageLogs.BackgroundTransparency = 1
 pageLogs.Visible = false
@@ -502,7 +753,13 @@ local function switchTab(activeIndex)
 
 	local tabs = { tabTargetsBtn, tabSettingsBtn, tabLogsBtn }
 	for i, b in ipairs(tabs) do
-		b.BackgroundColor3 = (i == activeIndex) and Color3.fromRGB(58, 92, 168) or Color3.fromRGB(34, 38, 48)
+		local active = (i == activeIndex)
+		b.BackgroundColor3 = active and Color3.fromRGB(79, 70, 229) or Color3.fromRGB(28, 33, 46)
+		b.TextColor3 = active and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(148, 163, 184)
+	end
+
+	if activeIndex == 3 then
+		scrollLogsToBottom()
 	end
 end
 
@@ -510,57 +767,127 @@ tabTargetsBtn.MouseButton1Click:Connect(function() switchTab(1) end)
 tabSettingsBtn.MouseButton1Click:Connect(function() switchTab(2) end)
 tabLogsBtn.MouseButton1Click:Connect(function() switchTab(3) end)
 
--- Вкладка 1: Targets
+-- Вкладка 1: Цели
 local addRow = Instance.new("Frame")
 addRow.Size = UDim2.new(1, 0, 0, 32)
 addRow.BackgroundTransparency = 1
 addRow.Parent = pageTargets
 
 local skinInput = Instance.new("TextBox")
-skinInput.Size = UDim2.new(0.54, -4, 1, 0)
+skinInput.Size = UDim2.new(0.55, -5, 1, 0)
 skinInput.Position = UDim2.new(0, 0, 0, 0)
-skinInput.BackgroundColor3 = Color3.fromRGB(32, 36, 46)
-skinInput.Font = Enum.Font.Gotham
+skinInput.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
+skinInput.Font = Enum.Font.GothamMedium
 skinInput.TextSize = 12
-skinInput.TextColor3 = Color3.fromRGB(240, 240, 240)
-skinInput.PlaceholderText = "Skin ID (например Exotic.Rainbow.AWP)"
+skinInput.TextColor3 = Color3.fromRGB(241, 245, 249)
+skinInput.PlaceholderColor3 = Color3.fromRGB(100, 116, 139)
+skinInput.PlaceholderText = "ID предмета (напр. Exotic.Rainbow.AWP)"
 skinInput.Text = ""
 skinInput.ClearTextOnFocus = false
 skinInput.Parent = addRow
 Instance.new("UICorner", skinInput).CornerRadius = UDim.new(0, 6)
+addStroke(skinInput, Color3.fromRGB(42, 50, 70), 1)
+addPadding(skinInput, 0, 10, 0, 10)
 
 local priceInput = Instance.new("TextBox")
-priceInput.Size = UDim2.new(0.22, -4, 1, 0)
-priceInput.Position = UDim2.new(0.54, 2, 0, 0)
-priceInput.BackgroundColor3 = Color3.fromRGB(32, 36, 46)
-priceInput.Font = Enum.Font.Gotham
+priceInput.Size = UDim2.new(0.21, -5, 1, 0)
+priceInput.Position = UDim2.new(0.55, 2, 0, 0)
+priceInput.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
+priceInput.Font = Enum.Font.GothamBold
 priceInput.TextSize = 12
-priceInput.TextColor3 = Color3.fromRGB(240, 240, 240)
-priceInput.PlaceholderText = "Max Price"
+priceInput.TextColor3 = Color3.fromRGB(125, 211, 252)
+priceInput.PlaceholderColor3 = Color3.fromRGB(100, 116, 139)
+priceInput.PlaceholderText = "Макс. цена"
 priceInput.Text = "2000"
 priceInput.ClearTextOnFocus = false
 priceInput.Parent = addRow
 Instance.new("UICorner", priceInput).CornerRadius = UDim.new(0, 6)
+addStroke(priceInput, Color3.fromRGB(42, 50, 70), 1)
+addPadding(priceInput, 0, 8, 0, 8)
 
 local addBtn = Instance.new("TextButton")
 addBtn.Size = UDim2.new(0.24, 0, 1, 0)
 addBtn.Position = UDim2.new(0.76, 0, 0, 0)
-addBtn.BackgroundColor3 = Color3.fromRGB(58, 92, 168)
+addBtn.BackgroundColor3 = Color3.fromRGB(79, 70, 229)
 addBtn.Font = Enum.Font.GothamBold
 addBtn.TextSize = 12
 addBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-addBtn.Text = "+ Add"
+addBtn.Text = "+ Добавить"
 addBtn.Parent = addRow
 Instance.new("UICorner", addBtn).CornerRadius = UDim.new(0, 6)
 
+-- Массовое изменение цены для всех целей
+local bulkRow = Instance.new("Frame")
+bulkRow.Size = UDim2.new(1, 0, 0, 28)
+bulkRow.Position = UDim2.new(0, 0, 0, 36)
+bulkRow.BackgroundColor3 = Color3.fromRGB(20, 24, 34)
+bulkRow.Parent = pageTargets
+Instance.new("UICorner", bulkRow).CornerRadius = UDim.new(0, 6)
+addStroke(bulkRow, Color3.fromRGB(36, 44, 62), 1)
+
+local bulkLabel = Instance.new("TextLabel")
+bulkLabel.Size = UDim2.new(0.55, -8, 1, 0)
+bulkLabel.Position = UDim2.new(0, 10, 0, 0)
+bulkLabel.BackgroundTransparency = 1
+bulkLabel.Font = Enum.Font.GothamMedium
+bulkLabel.TextSize = 11
+bulkLabel.TextXAlignment = Enum.TextXAlignment.Left
+bulkLabel.TextColor3 = Color3.fromRGB(148, 163, 184)
+bulkLabel.Text = "Цена для всех целей сразу:"
+bulkLabel.Parent = bulkRow
+
+local bulkPriceInput = Instance.new("TextBox")
+bulkPriceInput.Size = UDim2.new(0.21, -5, 0, 22)
+bulkPriceInput.Position = UDim2.new(0.55, 2, 0.5, -11)
+bulkPriceInput.BackgroundColor3 = Color3.fromRGB(15, 18, 26)
+bulkPriceInput.Font = Enum.Font.GothamBold
+bulkPriceInput.TextSize = 11
+bulkPriceInput.TextColor3 = Color3.fromRGB(125, 211, 252)
+bulkPriceInput.Text = "2000"
+bulkPriceInput.ClearTextOnFocus = false
+bulkPriceInput.Parent = bulkRow
+Instance.new("UICorner", bulkPriceInput).CornerRadius = UDim.new(0, 5)
+addStroke(bulkPriceInput, Color3.fromRGB(45, 54, 76), 1)
+
+local bulkApplyBtn = Instance.new("TextButton")
+bulkApplyBtn.Size = UDim2.new(0.24, -4, 0, 22)
+bulkApplyBtn.Position = UDim2.new(0.76, 0, 0.5, -11)
+bulkApplyBtn.BackgroundColor3 = Color3.fromRGB(30, 58, 95)
+bulkApplyBtn.Font = Enum.Font.GothamBold
+bulkApplyBtn.TextSize = 11
+bulkApplyBtn.TextColor3 = Color3.fromRGB(186, 230, 253)
+bulkApplyBtn.Text = "Всем макс."
+bulkApplyBtn.Parent = bulkRow
+Instance.new("UICorner", bulkApplyBtn).CornerRadius = UDim.new(0, 5)
+addStroke(bulkApplyBtn, Color3.fromRGB(56, 98, 152), 1)
+
+bulkApplyBtn.MouseButton1Click:Connect(function()
+	local newMax = tonumber(bulkPriceInput.Text)
+	if not newMax or newMax <= 0 then
+		pushLog("Укажи корректную общую цену > 0")
+		return
+	end
+	local count = 0
+	for skinName in pairs(State.targets) do
+		State.targets[skinName] = newMax
+		count += 1
+	end
+	refreshTargetsUI()
+	saveConfig()
+	pushLog(string.format("Обновлена цена до %d для %d целей", newMax, count))
+end)
+
 local targetList = Instance.new("ScrollingFrame")
-targetList.Size = UDim2.new(1, 0, 1, -40)
-targetList.Position = UDim2.new(0, 0, 0, 40)
-targetList.BackgroundColor3 = Color3.fromRGB(25, 28, 36)
+targetList.Size = UDim2.new(1, 0, 1, -70)
+targetList.Position = UDim2.new(0, 0, 0, 70)
+targetList.BackgroundColor3 = Color3.fromRGB(19, 23, 33)
 targetList.ScrollBarThickness = 4
+targetList.ScrollBarImageColor3 = Color3.fromRGB(99, 102, 241)
 targetList.CanvasSize = UDim2.new(0, 0, 0, 0)
 targetList.Parent = pageTargets
 Instance.new("UICorner", targetList).CornerRadius = UDim.new(0, 7)
+addStroke(targetList, Color3.fromRGB(38, 46, 66), 1)
+addPadding(targetList, 6, 6, 6, 6)
 
 local targetLayout = Instance.new("UIListLayout")
 targetLayout.Padding = UDim.new(0, 4)
@@ -582,30 +909,43 @@ refreshTargetsUI = function()
 	for _, skinName in ipairs(keys) do
 		local maxP = State.targets[skinName]
 		local row = Instance.new("Frame")
-		row.Size = UDim2.new(1, -8, 0, 28)
-		row.BackgroundColor3 = Color3.fromRGB(34, 38, 49)
+		row.Size = UDim2.new(1, -6, 0, 28)
+		row.BackgroundColor3 = Color3.fromRGB(26, 31, 43)
 		row.Parent = targetList
 		Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
+		addStroke(row, Color3.fromRGB(40, 48, 68), 1)
 
 		local lbl = Instance.new("TextLabel")
-		lbl.Size = UDim2.new(1, -68, 1, 0)
+		lbl.Size = UDim2.new(1, -155, 1, 0)
 		lbl.Position = UDim2.new(0, 10, 0, 0)
 		lbl.BackgroundTransparency = 1
-		lbl.Font = Enum.Font.Gotham
+		lbl.Font = Enum.Font.GothamMedium
 		lbl.TextSize = 12
 		lbl.TextXAlignment = Enum.TextXAlignment.Left
-		lbl.TextColor3 = Color3.fromRGB(235, 238, 245)
-		lbl.Text = string.format("%s  —  <= %d", skinName, maxP)
+		lbl.TextTruncate = Enum.TextTruncate.AtEnd
+		lbl.TextColor3 = Color3.fromRGB(226, 232, 240)
+		lbl.Text = skinName
 		lbl.Parent = row
 
+		local priceTag = Instance.new("TextLabel")
+		priceTag.Size = UDim2.new(0, 76, 0, 20)
+		priceTag.Position = UDim2.new(1, -142, 0.5, -10)
+		priceTag.BackgroundColor3 = Color3.fromRGB(20, 36, 52)
+		priceTag.Font = Enum.Font.GothamBold
+		priceTag.TextSize = 11
+		priceTag.TextColor3 = Color3.fromRGB(125, 211, 252)
+		priceTag.Text = "до " .. tostring(maxP)
+		priceTag.Parent = row
+		Instance.new("UICorner", priceTag).CornerRadius = UDim.new(0, 5)
+
 		local delBtn = Instance.new("TextButton")
-		delBtn.Size = UDim2.new(0, 54, 0, 20)
-		delBtn.Position = UDim2.new(1, -60, 0.5, -10)
-		delBtn.BackgroundColor3 = Color3.fromRGB(165, 52, 58)
+		delBtn.Size = UDim2.new(0, 56, 0, 20)
+		delBtn.Position = UDim2.new(1, -62, 0.5, -10)
+		delBtn.BackgroundColor3 = Color3.fromRGB(153, 27, 27)
 		delBtn.Font = Enum.Font.GothamBold
-		delBtn.TextSize = 11
-		delBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-		delBtn.Text = "Remove"
+		delBtn.TextSize = 10
+		delBtn.TextColor3 = Color3.fromRGB(254, 226, 226)
+		delBtn.Text = "Удалить"
 		delBtn.Parent = row
 		Instance.new("UICorner", delBtn).CornerRadius = UDim.new(0, 5)
 
@@ -617,7 +957,7 @@ refreshTargetsUI = function()
 		end)
 	end
 
-	targetList.CanvasSize = UDim2.new(0, 0, 0, targetLayout.AbsoluteContentSize.Y + 8)
+	targetList.CanvasSize = UDim2.new(0, 0, 0, targetLayout.AbsoluteContentSize.Y + 12)
 end
 
 addBtn.MouseButton1Click:Connect(function()
@@ -628,40 +968,41 @@ addBtn.MouseButton1Click:Connect(function()
 		skinInput.Text = ""
 		refreshTargetsUI()
 		saveConfig()
-		pushLog(string.format("Цель добавлена: %s (<= %d)", name, pNum))
+		pushLog(string.format("Добавлена цель: %s (до %d)", name, pNum))
 	else
-		pushLog("Укажи корректный Skin ID и цену > 0")
+		pushLog("Укажи корректный ID предмета и цену > 0")
 	end
 end)
 
 refreshTargetsUI()
 
--- Вкладка 2: Settings
+-- Вкладка 2: Настройки
 local settingsLayout = Instance.new("UIListLayout")
-settingsLayout.Padding = UDim.new(0, 6)
+settingsLayout.Padding = UDim.new(0, 5)
 settingsLayout.Parent = pageSettings
 
 local function createToggleRow(labelText, getValue, onChange)
 	local row = Instance.new("Frame")
 	row.Size = UDim2.new(1, -6, 0, 32)
-	row.BackgroundColor3 = Color3.fromRGB(30, 34, 44)
+	row.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
 	row.Parent = pageSettings
 	Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
+	addStroke(row, Color3.fromRGB(38, 46, 66), 1)
 
 	local lbl = Instance.new("TextLabel")
-	lbl.Size = UDim2.new(0.7, -10, 1, 0)
-	lbl.Position = UDim2.new(0, 10, 0, 0)
+	lbl.Size = UDim2.new(0.7, -12, 1, 0)
+	lbl.Position = UDim2.new(0, 12, 0, 0)
 	lbl.BackgroundTransparency = 1
-	lbl.Font = Enum.Font.GothamSemibold
+	lbl.Font = Enum.Font.GothamMedium
 	lbl.TextSize = 12
 	lbl.TextXAlignment = Enum.TextXAlignment.Left
-	lbl.TextColor3 = Color3.fromRGB(235, 238, 245)
+	lbl.TextColor3 = Color3.fromRGB(226, 232, 240)
 	lbl.Text = labelText
 	lbl.Parent = row
 
 	local btn = Instance.new("TextButton")
-	btn.Size = UDim2.new(0, 74, 0, 22)
-	btn.Position = UDim2.new(1, -82, 0.5, -11)
+	btn.Size = UDim2.new(0, 76, 0, 22)
+	btn.Position = UDim2.new(1, -84, 0.5, -11)
 	btn.Font = Enum.Font.GothamBold
 	btn.TextSize = 11
 	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -670,8 +1011,8 @@ local function createToggleRow(labelText, getValue, onChange)
 
 	local function paint()
 		local active = getValue()
-		btn.Text = active and "ON" or "OFF"
-		btn.BackgroundColor3 = active and Color3.fromRGB(46, 160, 98) or Color3.fromRGB(95, 100, 115)
+		btn.Text = active and "ВКЛ" or "ВЫКЛ"
+		btn.BackgroundColor3 = active and Color3.fromRGB(34, 197, 94) or Color3.fromRGB(71, 85, 105)
 	end
 	paint()
 	table.insert(settingsRefreshers, paint)
@@ -683,35 +1024,37 @@ local function createToggleRow(labelText, getValue, onChange)
 	end)
 end
 
-local function createNumberRow(labelText, getValue, minVal, onChange)
+local function createNumberRow(labelText, getValue, minVal, maxVal, onChange)
 	local row = Instance.new("Frame")
 	row.Size = UDim2.new(1, -6, 0, 32)
-	row.BackgroundColor3 = Color3.fromRGB(30, 34, 44)
+	row.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
 	row.Parent = pageSettings
 	Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
+	addStroke(row, Color3.fromRGB(38, 46, 66), 1)
 
 	local lbl = Instance.new("TextLabel")
-	lbl.Size = UDim2.new(0.7, -10, 1, 0)
-	lbl.Position = UDim2.new(0, 10, 0, 0)
+	lbl.Size = UDim2.new(0.7, -12, 1, 0)
+	lbl.Position = UDim2.new(0, 12, 0, 0)
 	lbl.BackgroundTransparency = 1
-	lbl.Font = Enum.Font.GothamSemibold
+	lbl.Font = Enum.Font.GothamMedium
 	lbl.TextSize = 12
 	lbl.TextXAlignment = Enum.TextXAlignment.Left
-	lbl.TextColor3 = Color3.fromRGB(235, 238, 245)
+	lbl.TextColor3 = Color3.fromRGB(226, 232, 240)
 	lbl.Text = labelText
 	lbl.Parent = row
 
 	local box = Instance.new("TextBox")
-	box.Size = UDim2.new(0, 74, 0, 22)
-	box.Position = UDim2.new(1, -82, 0.5, -11)
-	box.BackgroundColor3 = Color3.fromRGB(22, 25, 33)
+	box.Size = UDim2.new(0, 86, 0, 22)
+	box.Position = UDim2.new(1, -94, 0.5, -11)
+	box.BackgroundColor3 = Color3.fromRGB(16, 20, 29)
 	box.Font = Enum.Font.GothamBold
 	box.TextSize = 12
-	box.TextColor3 = Color3.fromRGB(255, 255, 255)
+	box.TextColor3 = Color3.fromRGB(125, 211, 252)
 	box.Text = tostring(getValue())
 	box.ClearTextOnFocus = false
 	box.Parent = row
 	Instance.new("UICorner", box).CornerRadius = UDim.new(0, 5)
+	addStroke(box, Color3.fromRGB(48, 57, 78), 1)
 
 	local function paint()
 		box.Text = tostring(getValue())
@@ -721,9 +1064,8 @@ local function createNumberRow(labelText, getValue, minVal, onChange)
 	box.FocusLost:Connect(function()
 		local num = tonumber(box.Text)
 		if num then
-			if minVal then
-				num = math.max(minVal, num)
-			end
+			if minVal then num = math.max(minVal, num) end
+			if maxVal then num = math.min(maxVal, num) end
 			onChange(num)
 			saveConfig()
 		end
@@ -731,12 +1073,81 @@ local function createNumberRow(labelText, getValue, minVal, onChange)
 	end)
 end
 
-createToggleRow("Auto Buy (Current Server)", function() return State.autoBuy end, function(v) State.autoBuy = v end)
-createToggleRow("Auto Teleport (JobId)", function() return State.autoTeleport end, function(v) State.autoTeleport = v end)
-createNumberRow("Skin Delay (sec)", function() return State.skinDelay end, 0.05, function(v) State.skinDelay = v end)
-createNumberRow("Loop Delay (sec)", function() return State.loopDelay end, 0.05, function(v) State.loopDelay = v end)
-createNumberRow("Teleport Wait (sec)", function() return State.tpWait end, 1, function(v) State.tpWait = v end)
-createNumberRow("Min Price Filter", function() return State.minPrice end, 0, function(v) State.minPrice = v end)
+-- Горячая клавиша скрытия UI
+local listeningHotkey = false
+do
+	local row = Instance.new("Frame")
+	row.Size = UDim2.new(1, -6, 0, 32)
+	row.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
+	row.Parent = pageSettings
+	Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
+	addStroke(row, Color3.fromRGB(38, 46, 66), 1)
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(0.65, -12, 1, 0)
+	lbl.Position = UDim2.new(0, 12, 0, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.Font = Enum.Font.GothamMedium
+	lbl.TextSize = 12
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.TextColor3 = Color3.fromRGB(226, 232, 240)
+	lbl.Text = "Скрыть / показать меню"
+	lbl.Parent = row
+
+	local keyBtn = Instance.new("TextButton")
+	keyBtn.Size = UDim2.new(0, 110, 0, 22)
+	keyBtn.Position = UDim2.new(1, -118, 0.5, -11)
+	keyBtn.BackgroundColor3 = Color3.fromRGB(49, 46, 129)
+	keyBtn.Font = Enum.Font.GothamBold
+	keyBtn.TextSize = 11
+	keyBtn.TextColor3 = Color3.fromRGB(224, 231, 255)
+	keyBtn.Parent = row
+	Instance.new("UICorner", keyBtn).CornerRadius = UDim.new(0, 5)
+	addStroke(keyBtn, Color3.fromRGB(99, 102, 241), 1)
+
+	local function paintKey()
+		keyBtn.Text = listeningHotkey and "Нажми клавишу..." or State.hotkey
+	end
+	paintKey()
+	table.insert(settingsRefreshers, paintKey)
+
+	keyBtn.MouseButton1Click:Connect(function()
+		listeningHotkey = true
+		paintKey()
+	end)
+
+	UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if not isActiveInstance() then
+			return
+		end
+		if listeningHotkey and input.UserInputType == Enum.UserInputType.Keyboard then
+			if input.KeyCode ~= Enum.KeyCode.Unknown then
+				State.hotkey = input.KeyCode.Name
+				listeningHotkey = false
+				paintKey()
+				saveConfig()
+				pushLog("Клавиша меню изменена на: " .. State.hotkey)
+			end
+			return
+		end
+
+		if not gameProcessed and input.UserInputType == Enum.UserInputType.Keyboard then
+			if input.KeyCode.Name == State.hotkey then
+				mainFrame.Visible = not mainFrame.Visible
+			end
+		end
+	end)
+end
+
+createToggleRow("Автопокупка (на текущем сервере)", function() return State.autoBuy end, function(v) State.autoBuy = v end)
+createToggleRow("Автотелепорт (по JobId)", function() return State.autoTeleport end, function(v) State.autoTeleport = v end)
+createToggleRow("Звук при покупке", function() return State.soundAlert end, function(v) State.soundAlert = v end)
+createNumberRow("Повторы покупки (0-5)", function() return State.buyRetries end, 0, 5, function(v) State.buyRetries = math.floor(v) end)
+createNumberRow("Кулдаун плохого TP (сек)", function() return State.tpCooldown end, 5, 3600, function(v) State.tpCooldown = v end)
+createNumberRow("Задержка на скин (сек)", function() return State.skinDelay end, 0.05, 60, function(v) State.skinDelay = v end)
+createNumberRow("Задержка цикла (сек)", function() return State.loopDelay end, 0.05, 60, function(v) State.loopDelay = v end)
+createNumberRow("Ожидание телепорта (сек)", function() return State.tpWait end, 1, 60, function(v) State.tpWait = v end)
+createNumberRow("Мин. цена (фильтр)", function() return State.minPrice end, 0, 100000000, function(v) State.minPrice = v end)
 
 local cfgRow = Instance.new("Frame")
 cfgRow.Size = UDim2.new(1, -6, 0, 32)
@@ -744,61 +1155,80 @@ cfgRow.BackgroundTransparency = 1
 cfgRow.Parent = pageSettings
 
 local saveCfgBtn = Instance.new("TextButton")
-saveCfgBtn.Size = UDim2.new(0.5, -3, 1, 0)
+saveCfgBtn.Size = UDim2.new(0.34, -4, 1, 0)
 saveCfgBtn.Position = UDim2.new(0, 0, 0, 0)
-saveCfgBtn.BackgroundColor3 = Color3.fromRGB(58, 92, 168)
+saveCfgBtn.BackgroundColor3 = Color3.fromRGB(79, 70, 229)
 saveCfgBtn.Font = Enum.Font.GothamBold
-saveCfgBtn.TextSize = 12
+saveCfgBtn.TextSize = 11
 saveCfgBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-saveCfgBtn.Text = "Save Config"
+saveCfgBtn.Text = "Сохранить"
 saveCfgBtn.Parent = cfgRow
 Instance.new("UICorner", saveCfgBtn).CornerRadius = UDim.new(0, 6)
 
 local loadCfgBtn = Instance.new("TextButton")
-loadCfgBtn.Size = UDim2.new(0.5, -3, 1, 0)
-loadCfgBtn.Position = UDim2.new(0.5, 3, 0, 0)
-loadCfgBtn.BackgroundColor3 = Color3.fromRGB(45, 50, 64)
+loadCfgBtn.Size = UDim2.new(0.33, -4, 1, 0)
+loadCfgBtn.Position = UDim2.new(0.34, 2, 0, 0)
+loadCfgBtn.BackgroundColor3 = Color3.fromRGB(28, 33, 46)
 loadCfgBtn.Font = Enum.Font.GothamBold
-loadCfgBtn.TextSize = 12
-loadCfgBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-loadCfgBtn.Text = "Load Config"
+loadCfgBtn.TextSize = 11
+loadCfgBtn.TextColor3 = Color3.fromRGB(226, 232, 240)
+loadCfgBtn.Text = "Загрузить"
 loadCfgBtn.Parent = cfgRow
 Instance.new("UICorner", loadCfgBtn).CornerRadius = UDim.new(0, 6)
+addStroke(loadCfgBtn, Color3.fromRGB(48, 57, 78), 1)
+
+local defaultCfgBtn = Instance.new("TextButton")
+defaultCfgBtn.Size = UDim2.new(0.33, -2, 1, 0)
+defaultCfgBtn.Position = UDim2.new(0.67, 2, 0, 0)
+defaultCfgBtn.BackgroundColor3 = Color3.fromRGB(127, 29, 29)
+defaultCfgBtn.Font = Enum.Font.GothamBold
+defaultCfgBtn.TextSize = 11
+defaultCfgBtn.TextColor3 = Color3.fromRGB(254, 226, 226)
+defaultCfgBtn.Text = "Сбросить"
+defaultCfgBtn.Parent = cfgRow
+Instance.new("UICorner", defaultCfgBtn).CornerRadius = UDim.new(0, 6)
 
 saveCfgBtn.MouseButton1Click:Connect(function()
 	saveConfig()
-	pushLog("Config сохранен вручную")
+	pushLog("Конфиг сохранён вручную")
 end)
 
 loadCfgBtn.MouseButton1Click:Connect(function()
 	loadConfig()
 end)
 
--- Вкладка 3: Logs
+defaultCfgBtn.MouseButton1Click:Connect(function()
+	resetToDefaultConfig()
+end)
+
+-- Вкладка 3: Логи
 local clearLogsBtn = Instance.new("TextButton")
-clearLogsBtn.Size = UDim2.new(0, 90, 0, 26)
-clearLogsBtn.Position = UDim2.new(1, -90, 0, 0)
-clearLogsBtn.BackgroundColor3 = Color3.fromRGB(45, 50, 64)
+clearLogsBtn.Size = UDim2.new(0, 110, 0, 26)
+clearLogsBtn.Position = UDim2.new(1, -110, 0, 0)
+clearLogsBtn.BackgroundColor3 = Color3.fromRGB(28, 33, 46)
 clearLogsBtn.Font = Enum.Font.GothamBold
 clearLogsBtn.TextSize = 11
-clearLogsBtn.TextColor3 = Color3.fromRGB(240, 240, 240)
-clearLogsBtn.Text = "Clear Logs"
+clearLogsBtn.TextColor3 = Color3.fromRGB(226, 232, 240)
+clearLogsBtn.Text = "Очистить логи"
 clearLogsBtn.Parent = pageLogs
 Instance.new("UICorner", clearLogsBtn).CornerRadius = UDim.new(0, 6)
+addStroke(clearLogsBtn, Color3.fromRGB(48, 57, 78), 1)
 
-local logScroll = Instance.new("ScrollingFrame")
+logScroll = Instance.new("ScrollingFrame")
 logScroll.Size = UDim2.new(1, 0, 1, -32)
 logScroll.Position = UDim2.new(0, 0, 0, 32)
-logScroll.BackgroundColor3 = Color3.fromRGB(16, 18, 24)
+logScroll.BackgroundColor3 = Color3.fromRGB(14, 17, 24)
 logScroll.ScrollBarThickness = 4
+logScroll.ScrollBarImageColor3 = Color3.fromRGB(99, 102, 241)
 logScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
 logScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 logScroll.Parent = pageLogs
 Instance.new("UICorner", logScroll).CornerRadius = UDim.new(0, 7)
+addStroke(logScroll, Color3.fromRGB(38, 46, 66), 1)
 
 logLabel = Instance.new("TextLabel")
-logLabel.Size = UDim2.new(1, -12, 0, 0)
-logLabel.Position = UDim2.new(0, 6, 0, 5)
+logLabel.Size = UDim2.new(1, -14, 0, 0)
+logLabel.Position = UDim2.new(0, 8, 0, 6)
 logLabel.AutomaticSize = Enum.AutomaticSize.Y
 logLabel.BackgroundTransparency = 1
 logLabel.Font = Enum.Font.Code
@@ -806,12 +1236,15 @@ logLabel.TextSize = 11
 logLabel.TextXAlignment = Enum.TextXAlignment.Left
 logLabel.TextYAlignment = Enum.TextYAlignment.Top
 logLabel.TextWrapped = true
-logLabel.TextColor3 = Color3.fromRGB(205, 214, 232)
+logLabel.TextColor3 = Color3.fromRGB(203, 213, 225)
 logLabel.Text = ""
 logLabel.Parent = logScroll
 
 clearLogsBtn.MouseButton1Click:Connect(function()
 	logLabel.Text = ""
+	if logScroll then
+		logScroll.CanvasPosition = Vector2.new(0, 0)
+	end
 end)
 
 -- Управление запуском и сворачиванием
@@ -825,87 +1258,141 @@ local minimized = false
 minBtn.MouseButton1Click:Connect(function()
 	minimized = not minimized
 	bodyFrame.Visible = not minimized
-	mainFrame.Size = minimized and UDim2.new(0, 580, 0, 44) or UDim2.new(0, 580, 0, 390)
-	minBtn.Text = minimized and "+" or "-"
+	mainFrame.Size = minimized and UDim2.new(0, 620, 0, 46) or UDim2.new(0, 620, 0, 410)
+	minBtn.Text = minimized and "+" or "—"
 end)
 
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	if not gameProcessed and input.KeyCode == Enum.KeyCode.RightShift then
-		mainFrame.Visible = not mainFrame.Visible
+-- Формирование очереди целей с учётом приоритетного скина после телепорта
+local function buildScanQueue()
+	local queue = {}
+	if State.prioritySkin and State.targets[State.prioritySkin] ~= nil then
+		table.insert(queue, { skinId = State.prioritySkin, maxPrice = State.targets[State.prioritySkin] })
 	end
-end)
+	for skinId, maxPrice in pairs(State.targets) do
+		if skinId ~= State.prioritySkin then
+			table.insert(queue, { skinId = skinId, maxPrice = maxPrice })
+		end
+	end
+	return queue
+end
 
 -- Основной цикл работы
 task.spawn(function()
-	while true do
+	while isActiveInstance() do
 		if State.running then
-			for skinId, maxPrice in pairs(State.targets) do
-				if not State.running then
+			local queue = buildScanQueue()
+			for _, entry in ipairs(queue) do
+				if not isActiveInstance() or not State.running then
 					break
 				end
 
-				setStatus("SCAN: " .. skinId, Color3.fromRGB(120, 185, 255))
+				local skinId = entry.skinId
+				local maxPrice = entry.maxPrice
+
+				setStatus("ПОИСК", Color3.fromRGB(125, 211, 252))
 				local ok, results = pcall(invokeSearch, skinId)
+
+				if not isActiveInstance() then
+					break
+				end
 
 				if ok and type(results) == "table" then
 					for _, item in pairs(results) do
-						if not State.running then
+						if not isActiveInstance() or not State.running then
 							break
 						end
 
 						local price = type(item) == "table" and tonumber(item.Price) or nil
 						if price and price >= State.minPrice and price <= maxPrice then
+							setStatus("НАЙДЕН", Color3.fromRGB(52, 211, 153))
 							local entryKey = item.EntryId ~= nil and tostring(item.EntryId)
 								or (skinId .. "_" .. tostring(price) .. "_" .. tostring(item.JobId))
+							local sellerLabel = getSellerName(item)
 
 							if markEntrySeen(entryKey) then
 								State.foundCount += 1
-								updateFoundCounter()
+								updateCounters()
 								saveConfig()
-								pushLog(string.format("НАЙДЕНО #%d: %s | Цена: %d | EntryId: %s", State.foundCount, skinId, price, tostring(item.EntryId)))
+								pushLog(string.format("НАЙДЕНО: %s | %d | Продавец: %s", skinId, price, sellerLabel))
 							end
 
 							if type(item.JobId) == "string" and item.JobId ~= "" and item.JobId ~= game.JobId then
-	-- Лот на ДРУГОМ сервере -> только телепортируемся
-	if State.autoTeleport then
-		setStatus("TELEPORTING", Color3.fromRGB(245, 190, 75))
-		saveConfig(true)
-		State.running = false
-		local tpOk, tpErr = pcall(invokeTeleport, item.JobId)
-		if tpOk then
-			pushLog("Телепорт на JobId: " .. item.JobId)
-			task.wait(State.tpWait)
-			setRunning(true, false)
-			pushLog("Телепорт не сработал, продолжаю поиск")
-		else
-			setRunning(true, false)
-			pushLog("Ошибка телепорта: " .. tostring(tpErr))
-		end
-	end
-else
-	-- Лот на ТЕКУЩЕМ сервере -> покупаем
-	if State.autoBuy then
-		for k, v in pairs(item) do
-			pushLog("  item." .. tostring(k) .. " = " .. tostring(v) .. " (" .. typeof(v) .. ")")
-		end
+								if State.autoTeleport then
+									if isJobCoolingDown(item.JobId) then
+										pushLog("Пропуск JobId на кулдауне: " .. item.JobId)
+									else
+										setStatus("ТЕЛЕПОРТ", Color3.fromRGB(250, 204, 21))
+										State.prioritySkin = skinId
+										saveConfig(true)
+										State.running = false
+										local tpOk, tpErr = pcall(invokeTeleport, item.JobId)
+										if tpOk then
+											pushLog("Телепорт -> " .. skinId .. " (" .. item.JobId .. ")")
+											task.wait(State.tpWait)
+											if not isActiveInstance() then
+												break
+											end
+											markJobBad(item.JobId)
+											setRunning(true, false)
+											pushLog("Телепорт не сработал, JobId на кулдауне")
+										else
+											markJobBad(item.JobId)
+											setRunning(true, false)
+											pushLog("Ошибка телепорта: " .. tostring(tpErr))
+										end
+									end
+								end
+							else
+								if State.autoBuy then
+									local sellerPlayer = findSellerPlayer(item)
+									if sellerPlayer and item.EntryId ~= nil then
+										setStatus("ПОКУПКА", Color3.fromRGB(167, 139, 250))
+										local attempts = State.buyRetries + 1
+										local boughtOk = false
+										local lastRes = nil
 
-		local sellerPlayer = findSellerPlayer(item)
-		if sellerPlayer and item.EntryId ~= nil then
-			pushLog("Покупка у " .. sellerPlayer.Name .. " (" .. tostring(item.EntryId) .. ")")
-			local buyOk, buyRes = pcall(invokePurchase, sellerPlayer, item.EntryId)
-			pushLog("Ответ Purchase: " .. tostring(buyOk) .. " | " .. tostring(buyRes))
-		else
-			pushLog("Не найден продавец или EntryId для лота")
-		end
-	end
-end
+										for attempt = 1, attempts do
+											local buyOk, buyRes = pcall(invokePurchase, sellerPlayer, item.EntryId)
+											lastRes = buyRes
+											if buyOk and buyRes ~= false and buyRes ~= nil then
+												boughtOk = true
+												break
+											end
+											if attempt < attempts then
+												task.wait(0.25)
+											end
+										end
+
+										if boughtOk then
+											State.boughtCount += 1
+											if State.prioritySkin == skinId then
+												State.prioritySkin = nil
+											end
+											updateCounters()
+											saveConfig()
+											playAlert()
+											pushLog(string.format("КУПЛЕНО: %s | %d | Продавец: %s", skinId, price, sellerPlayer.Name))
+										else
+											pushLog(string.format("Не куплено %s у %s (%s)", skinId, sellerPlayer.Name, tostring(lastRes)))
+										end
+										setStatus("ПОИСК", Color3.fromRGB(125, 211, 252))
+									end
+								end
+							end
 						end
 					end
 				elseif not ok then
-					pushLog("Ошибка SearchIndex (" .. skinId .. "): " .. tostring(results))
+					pushLog("Ошибка поиска (" .. skinId .. "): " .. tostring(results))
 				end
 
+				if not isActiveInstance() or not State.running then
+					break
+				end
 				task.wait(State.skinDelay)
+			end
+
+			if isActiveInstance() and State.running then
+				setStatus("ОЖИДАНИЕ", Color3.fromRGB(148, 163, 184))
 			end
 		end
 
@@ -918,7 +1405,9 @@ pushLog("UI инициализирован. Автор: Kirraa74")
 local shouldAutoStart = loadConfig()
 if shouldAutoStart then
 	task.delay(2, function()
-		setRunning(true, false)
-		pushLog("Автозапуск цикла после загрузки сервера")
+		if isActiveInstance() then
+			setRunning(true, false)
+			pushLog("Автозапуск цикла после загрузки сервера")
+		end
 	end)
 end
