@@ -2,30 +2,32 @@ if not game:IsLoaded() then
 	game.Loaded:Wait()
 end
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TeleportService = game:GetService("TeleportService")
+local RS = game:GetService("ReplicatedStorage")
+local TS = game:GetService("TeleportService")
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local HttpService = game:GetService("HttpService")
+local UIS = game:GetService("UserInputService")
+local Http = game:GetService("HttpService")
 local SoundService = game:GetService("SoundService")
 
-local LocalPlayer = Players.LocalPlayer
-while not LocalPlayer do
+local LP = Players.LocalPlayer
+while not LP do
 	Players.PlayerAdded:Wait()
-	LocalPlayer = Players.LocalPlayer
+	LP = Players.LocalPlayer
+end
+if not LP.Character then
+	LP.CharacterAdded:Wait()
 end
 
-if not LocalPlayer.Character then
-	LocalPlayer.CharacterAdded:Wait()
-end
-
-local RemoteFolder = ReplicatedStorage:WaitForChild("Remote"):WaitForChild("PlayerMarketService")
-local SearchIndex = RemoteFolder:WaitForChild("SearchIndex")
-local PurchaseRemote = RemoteFolder:WaitForChild("Purchase")
+local MarketRemote = RS:WaitForChild("Remote"):WaitForChild("PlayerMarketService")
+local SearchIndex = MarketRemote:WaitForChild("SearchIndex")
+local PurchaseRemote = MarketRemote:WaitForChild("Purchase")
 
 local CONFIG_FILE = "kirraa74_market_config.json"
 local UI_NAME = "Kirraa74MarketUI"
-local MAX_SEEN_ENTRIES = 100
+local MAX_SEEN = 100
+local FAILED_COOLDOWN = 120
+local MAX_LOT_WAIT = 95
+local PENDING_RETRY = 0.5
 
 local DEFAULT_TARGETS = {
 	["Exotic.Rainbow.AWP"] = 2000,
@@ -85,11 +87,10 @@ local function cloneTargets(src)
 	return copy
 end
 
--- Уникальный ID запуска для защиты от дублирующих циклов
-local RUN_TOKEN = HttpService:GenerateGUID(false)
+local RUN_TOKEN = Http:GenerateGUID(false)
 getgenv().KIRRAA74_MARKET_TOKEN = RUN_TOKEN
 
-local function isActiveInstance()
+local function isActive()
 	return getgenv().KIRRAA74_MARKET_TOKEN == RUN_TOKEN
 end
 
@@ -105,24 +106,19 @@ local State = {
 	buyRetries = 1,
 	minPrice = 1,
 	prioritySkin = nil,
+	priorityPasses = 0,
 	foundCount = 0,
 	boughtCount = 0,
 	hotkey = "RightShift",
 	seenEntries = {},
 	seenOrder = {},
 	badJobIds = {},
+	failedEntryIds = {},
+	pendingLots = {},
 	targets = cloneTargets(DEFAULT_TARGETS),
 }
 
-local logLabel
-local logScroll
-local pageLogs
-local statusLabel
-local statusDot
-local foundLabel
-local boughtLabel
-local toggleRunBtn
-local refreshTargetsUI
+local logLabel, logScroll, pageLogs, statusLabel, statusDot, foundLabel, boughtLabel, toggleRunBtn, refreshTargetsUI
 local settingsRefreshers = {}
 
 local alertSound = Instance.new("Sound")
@@ -131,33 +127,46 @@ alertSound.SoundId = "rbxassetid://4590662766"
 alertSound.Volume = 0.6
 alertSound.Parent = SoundService
 
-local function playAlert()
-	if State.soundAlert and isActiveInstance() then
-		pcall(function()
-			alertSound:Play()
-		end)
+local function jitter(base)
+	return base + (0.05 + math.random() * 0.20)
+end
+
+local function hasIO()
+	return typeof(writefile) == "function"
+		and typeof(readfile) == "function"
+		and typeof(isfile) == "function"
+end
+
+local function readNum(val, minV, maxV, isInt)
+	local n = tonumber(val)
+	if not n then
+		return nil
 	end
+	if isInt then
+		n = math.floor(n)
+	end
+	if minV then
+		n = math.max(minV, n)
+	end
+	if maxV then
+		n = math.min(maxV, n)
+	end
+	return n
 end
 
 local function updateCounters()
 	if foundLabel then
-		foundLabel.Text = "Найдено: " .. tostring(State.foundCount)
+		foundLabel.Text = "Найдено: " .. State.foundCount
 	end
 	if boughtLabel then
-		boughtLabel.Text = "Куплено: " .. tostring(State.boughtCount)
+		boughtLabel.Text = "Куплено: " .. State.boughtCount
 	end
 end
 
-local function refreshSettingsUI()
-	for _, fn in ipairs(settingsRefreshers) do
-		fn()
-	end
-end
-
-local function scrollLogsToBottom()
+local function scrollLogs()
 	if logScroll and pageLogs and pageLogs.Visible then
 		task.defer(function()
-			if logScroll and isActiveInstance() then
+			if logScroll and isActive() then
 				logScroll.CanvasPosition = Vector2.new(0, math.max(0, logScroll.AbsoluteCanvasSize.Y))
 			end
 		end)
@@ -165,29 +174,24 @@ local function scrollLogsToBottom()
 end
 
 local function pushLog(text)
-	if not isActiveInstance() then
+	if not isActive() then
 		return
 	end
-	local stamp = os.date("%H:%M:%S")
-	local line = string.format("[%s] %s", stamp, tostring(text))
+	local line = string.format("[%s] %s", os.date("%H:%M:%S"), tostring(text))
 	print(line)
 	if logLabel then
-		if logLabel.Text == "" then
-			logLabel.Text = line
-		else
-			logLabel.Text = logLabel.Text .. "\n" .. line
-		end
+		logLabel.Text = logLabel.Text == "" and line or (logLabel.Text .. "\n" .. line)
 		local lines = string.split(logLabel.Text, "\n")
 		if #lines > 140 then
 			table.remove(lines, 1)
 			logLabel.Text = table.concat(lines, "\n")
 		end
-		scrollLogsToBottom()
+		scrollLogs()
 	end
 end
 
 local function setStatus(text, color)
-	if not isActiveInstance() then
+	if not isActive() then
 		return
 	end
 	if statusLabel then
@@ -201,49 +205,39 @@ local function setStatus(text, color)
 	end
 end
 
-local function hasFileIO()
-	return typeof(writefile) == "function" and typeof(readfile) == "function" and typeof(isfile) == "function"
-end
-
-local function markEntrySeen(entryKey)
-	if State.seenEntries[entryKey] then
+local function markSeen(key)
+	if State.seenEntries[key] then
 		return false
 	end
-	State.seenEntries[entryKey] = true
-	table.insert(State.seenOrder, entryKey)
-	if #State.seenOrder > MAX_SEEN_ENTRIES then
-		local oldest = table.remove(State.seenOrder, 1)
-		if oldest then
-			State.seenEntries[oldest] = nil
+	State.seenEntries[key] = true
+	table.insert(State.seenOrder, key)
+	if #State.seenOrder > MAX_SEEN then
+		local old = table.remove(State.seenOrder, 1)
+		if old then
+			State.seenEntries[old] = nil
 		end
 	end
 	return true
 end
 
-local function isJobCoolingDown(jobId)
-	local untilTime = State.badJobIds[jobId]
-	if not untilTime then
+local function isCooldown(tbl, key)
+	local t = tbl[key]
+	if not t then
 		return false
 	end
-	if os.clock() >= untilTime then
-		State.badJobIds[jobId] = nil
+	if os.clock() >= t then
+		tbl[key] = nil
 		return false
 	end
 	return true
 end
 
-local function markJobBad(jobId)
-	if type(jobId) == "string" and jobId ~= "" then
-		State.badJobIds[jobId] = os.clock() + State.tpCooldown
-	end
-end
-
-local function saveConfig(overrideRunning)
-	if not hasFileIO() then
+local function saveConfig(overrideRun)
+	if not hasIO() then
 		return
 	end
-	local payload = {
-		running = (overrideRunning ~= nil) and overrideRunning or State.running,
+	local ok, enc = pcall(Http.JSONEncode, Http, {
+		running = (overrideRun ~= nil) and overrideRun or State.running,
 		foundCount = State.foundCount,
 		boughtCount = State.boughtCount,
 		prioritySkin = State.prioritySkin,
@@ -259,43 +253,800 @@ local function saveConfig(overrideRunning)
 		buyRetries = State.buyRetries,
 		minPrice = State.minPrice,
 		targets = State.targets,
-	}
-	local ok, encoded = pcall(HttpService.JSONEncode, HttpService, payload)
-	if ok and type(encoded) == "string" then
-		pcall(writefile, CONFIG_FILE, encoded)
+	})
+	if ok and type(enc) == "string" then
+		pcall(writefile, CONFIG_FILE, enc)
 	end
 end
 
-local function setRunning(val, shouldSave)
+local function setRunning(val, save)
 	State.running = val
-	if toggleRunBtn and isActiveInstance() then
-		if State.running then
-			toggleRunBtn.Text = "СТОП"
-			toggleRunBtn.BackgroundColor3 = Color3.fromRGB(214, 69, 80)
-			setStatus("ПОИСК", Color3.fromRGB(74, 222, 128))
-		else
-			toggleRunBtn.Text = "СТАРТ"
-			toggleRunBtn.BackgroundColor3 = Color3.fromRGB(34, 197, 94)
-			setStatus("ПАУЗА", Color3.fromRGB(148, 163, 184))
-		end
+	if toggleRunBtn and isActive() then
+		toggleRunBtn.Text = val and "СТОП" or "СТАРТ"
+		toggleRunBtn.BackgroundColor3 = val and Color3.fromRGB(214, 69, 80) or Color3.fromRGB(34, 197, 94)
+		setStatus(
+			val and "ПОИСК" or "ПАУЗА",
+			val and Color3.fromRGB(74, 222, 128) or Color3.fromRGB(148, 163, 184)
+		)
 	end
-	if shouldSave then
+	if save then
 		saveConfig()
 	end
 end
 
-local function resetFoundCounter()
+local function loadConfig()
+	if not hasIO() then
+		return false
+	end
+	local eOk, exists = pcall(isfile, CONFIG_FILE)
+	if not eOk or not exists then
+		return false
+	end
+	local rOk, raw = pcall(readfile, CONFIG_FILE)
+	if not rOk or type(raw) ~= "string" then
+		return false
+	end
+	local dOk, d = pcall(Http.JSONDecode, Http, raw)
+	if not dOk or type(d) ~= "table" then
+		return false
+	end
+
+	if type(d.autoBuy) == "boolean" then State.autoBuy = d.autoBuy end
+	if type(d.autoTeleport) == "boolean" then State.autoTeleport = d.autoTeleport end
+	if type(d.soundAlert) == "boolean" then State.soundAlert = d.soundAlert end
+
+	State.skinDelay = readNum(d.skinDelay, 0.05) or State.skinDelay
+	State.loopDelay = readNum(d.loopDelay, 0.05) or State.loopDelay
+	State.tpWait = readNum(d.tpWait, 1) or State.tpWait
+	State.tpCooldown = readNum(d.tpCooldown, 5) or State.tpCooldown
+	State.buyRetries = readNum(d.buyRetries, 0, 5, true) or State.buyRetries
+	State.minPrice = readNum(d.minPrice, 0) or State.minPrice
+	State.foundCount = readNum(d.foundCount, 0) or State.foundCount
+	State.boughtCount = readNum(d.boughtCount, 0) or State.boughtCount
+
+	if type(d.prioritySkin) == "string" and d.prioritySkin ~= "" then
+		State.prioritySkin = d.prioritySkin
+		State.priorityPasses = 0
+	end
+	if type(d.hotkey) == "string" and Enum.KeyCode[d.hotkey] then
+		State.hotkey = d.hotkey
+	end
+	if type(d.seenOrder) == "table" then
+		State.seenEntries = {}
+		State.seenOrder = {}
+		for _, k in ipairs(d.seenOrder) do
+			if type(k) == "string" then
+				markSeen(k)
+			end
+		end
+	end
+	if type(d.targets) == "table" then
+		local clean = {}
+		for k, v in pairs(d.targets) do
+			local n = tonumber(v)
+			if type(k) == "string" and k ~= "" and n and n > 0 then
+				clean[k] = n
+			end
+		end
+		if next(clean) then
+			State.targets = clean
+		end
+	end
+
+	if refreshTargetsUI then
+		refreshTargetsUI()
+	end
+	for _, fn in ipairs(settingsRefreshers) do
+		fn()
+	end
+	updateCounters()
+	pushLog(string.format("Конфиг загружен | Найдено: %d | Куплено: %d", State.foundCount, State.boughtCount))
+	return d.running == true
+end
+
+local function findSeller(item)
+	if typeof(item.Seller) == "Instance" and item.Seller:IsA("Player") then
+		return item.Seller
+	end
+	for _, f in ipairs({ "SellerUserId", "OwnerId", "UserId", "PlayerId" }) do
+		local uid = tonumber(item[f])
+		if uid then
+			return Players:GetPlayerByUserId(uid)
+		end
+	end
+	for _, f in ipairs({ "SellerName", "OwnerName", "PlayerName", "Seller" }) do
+		if type(item[f]) == "string" then
+			local p = Players:FindFirstChild(item[f])
+			if p then
+				return p
+			end
+		end
+	end
+	return nil
+end
+
+local function getSellerName(item)
+	local p = findSeller(item)
+	if p then
+		return p.Name
+	end
+	for _, f in ipairs({ "SellerName", "SellerDisplayName", "OwnerName", "PlayerName", "Username", "Seller" }) do
+		if type(item[f]) == "string" and item[f] ~= "" then
+			return item[f]
+		end
+	end
+	local uid = tonumber(item.SellerUserId or item.OwnerId or item.UserId)
+	return uid and ("ID:" .. uid) or "Неизвестно"
+end
+
+-- UI Helpers
+local function getUiParent()
+	local ok, cg = pcall(function()
+		return game:GetService("CoreGui")
+	end)
+	if ok and cg then
+		local testOk = pcall(function()
+			local f = Instance.new("Folder")
+			f.Parent = cg
+			f:Destroy()
+		end)
+		if testOk then
+			return cg
+		end
+	end
+	return LP:WaitForChild("PlayerGui")
+end
+
+for _, parent in ipairs({ getUiParent(), LP:FindFirstChild("PlayerGui") }) do
+	if parent then
+		for _, o in ipairs(parent:GetChildren()) do
+			if o.Name == UI_NAME then
+				pcall(o.Destroy, o)
+			end
+		end
+	end
+end
+
+local function mk(cls, props, parent, corner, strokeColor, strokeTr)
+	local o = Instance.new(cls)
+	for k, v in pairs(props) do
+		o[k] = v
+	end
+	if corner then
+		Instance.new("UICorner", o).CornerRadius = UDim.new(0, corner)
+	end
+	if strokeColor then
+		local s = Instance.new("UIStroke", o)
+		s.Color = strokeColor
+		s.Transparency = strokeTr or 0.35
+		s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	end
+	o.Parent = parent
+	return o
+end
+
+local gui = mk("ScreenGui", {
+	Name = UI_NAME,
+	ResetOnSpawn = false,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+}, getUiParent())
+
+local main = mk("Frame", {
+	Size = UDim2.new(0, 620, 0, 410),
+	Position = UDim2.new(0.5, -310, 0.5, -205),
+	BackgroundColor3 = Color3.fromRGB(16, 19, 26),
+	BackgroundTransparency = 0.12,
+	BorderSizePixel = 0,
+	Active = true,
+}, gui, 10, Color3.fromRGB(72, 84, 114), 0.25)
+
+local header = mk("Frame", {
+	Size = UDim2.new(1, 0, 0, 46),
+	BackgroundColor3 = Color3.fromRGB(22, 26, 36),
+	BackgroundTransparency = 0.16,
+	BorderSizePixel = 0,
+}, main, 10)
+
+mk("Frame", {
+	Size = UDim2.new(0, 3, 0, 20),
+	Position = UDim2.new(0, 12, 0.5, -10),
+	BackgroundColor3 = Color3.fromRGB(99, 102, 241),
+	BorderSizePixel = 0,
+}, header, 99)
+
+mk("TextLabel", {
+	Size = UDim2.new(0, 155, 1, 0),
+	Position = UDim2.new(0, 22, 0, 0),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = Color3.fromRGB(241, 245, 249),
+	Text = "KIRRAA74 // МАРКЕТ",
+}, header)
+
+local counterPill = mk("Frame", {
+	Size = UDim2.new(0, 214, 0, 28),
+	Position = UDim2.new(1, -438, 0.5, -14),
+	BackgroundColor3 = Color3.fromRGB(28, 33, 46),
+	BackgroundTransparency = 0.2,
+	BorderSizePixel = 0,
+}, header, 6, Color3.fromRGB(68, 80, 108))
+
+foundLabel = mk("TextLabel", {
+	Size = UDim2.new(0, 82, 1, 0),
+	Position = UDim2.new(0, 8, 0, 0),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = Color3.fromRGB(125, 211, 252),
+	Text = "Найдено: 0",
+}, counterPill)
+
+boughtLabel = mk("TextLabel", {
+	Size = UDim2.new(0, 80, 1, 0),
+	Position = UDim2.new(0, 90, 0, 0),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = Color3.fromRGB(74, 222, 128),
+	Text = "Куплено: 0",
+}, counterPill)
+
+mk("TextButton", {
+	Size = UDim2.new(0, 40, 0, 20),
+	Position = UDim2.new(1, -44, 0.5, -10),
+	BackgroundColor3 = Color3.fromRGB(45, 55, 74),
+	BackgroundTransparency = 0.12,
+	Font = Enum.Font.GothamBold,
+	TextSize = 10,
+	TextColor3 = Color3.fromRGB(248, 250, 252),
+	Text = "Сброс",
+}, counterPill, 5).MouseButton1Click:Connect(function()
 	State.foundCount = 0
 	State.boughtCount = 0
 	State.seenEntries = {}
 	State.seenOrder = {}
 	State.badJobIds = {}
+	State.failedEntryIds = {}
+	State.pendingLots = {}
 	updateCounters()
 	saveConfig()
 	pushLog("Счётчики и кэш сброшены")
+end)
+
+local statusPill = mk("Frame", {
+	Size = UDim2.new(0, 104, 0, 28),
+	Position = UDim2.new(1, -218, 0.5, -14),
+	BackgroundColor3 = Color3.fromRGB(28, 33, 46),
+	BackgroundTransparency = 0.2,
+	BorderSizePixel = 0,
+}, header, 6, Color3.fromRGB(68, 80, 108))
+
+statusDot = mk("Frame", {
+	Size = UDim2.new(0, 7, 0, 7),
+	Position = UDim2.new(0, 9, 0.5, -3.5),
+	BackgroundColor3 = Color3.fromRGB(148, 163, 184),
+	BorderSizePixel = 0,
+}, statusPill, 99)
+
+statusLabel = mk("TextLabel", {
+	Size = UDim2.new(1, -22, 1, 0),
+	Position = UDim2.new(0, 20, 0, 0),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold,
+	TextSize = 10,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextTruncate = Enum.TextTruncate.AtEnd,
+	TextColor3 = Color3.fromRGB(148, 163, 184),
+	Text = "ПАУЗА",
+}, statusPill)
+
+toggleRunBtn = mk("TextButton", {
+	Size = UDim2.new(0, 72, 0, 28),
+	Position = UDim2.new(1, -108, 0.5, -14),
+	BackgroundColor3 = Color3.fromRGB(34, 197, 94),
+	BackgroundTransparency = 0.08,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	TextColor3 = Color3.new(1, 1, 1),
+	Text = "СТАРТ",
+}, header, 6)
+
+local minBtn = mk("TextButton", {
+	Size = UDim2.new(0, 26, 0, 28),
+	Position = UDim2.new(1, -30, 0.5, -14),
+	BackgroundColor3 = Color3.fromRGB(32, 38, 52),
+	BackgroundTransparency = 0.18,
+	Font = Enum.Font.GothamBold,
+	TextSize = 14,
+	TextColor3 = Color3.fromRGB(226, 232, 240),
+	Text = "—",
+}, header, 6, Color3.fromRGB(68, 80, 108))
+
+-- Перетаскивание
+do
+	local drag, startPos, dragStart
+	header.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			drag = true
+			dragStart = i.Position
+			startPos = main.Position
+		end
+	end)
+	header.InputEnded:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			drag = false
+		end
+	end)
+	UIS.InputChanged:Connect(function(i)
+		if drag and i.UserInputType == Enum.UserInputType.MouseMovement then
+			local d = i.Position - dragStart
+			main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+		end
+	end)
 end
 
-local function resetToDefaultConfig()
+local body = mk("Frame", {
+	Size = UDim2.new(1, 0, 1, -46),
+	Position = UDim2.new(0, 0, 0, 46),
+	BackgroundTransparency = 1,
+}, main)
+
+local tabBar = mk("Frame", {
+	Size = UDim2.new(1, -24, 0, 32),
+	Position = UDim2.new(0, 12, 0, 10),
+	BackgroundColor3 = Color3.fromRGB(22, 26, 36),
+	BackgroundTransparency = 0.2,
+}, body, 7, Color3.fromRGB(62, 74, 102))
+
+local pages = mk("Frame", {
+	Size = UDim2.new(1, -24, 1, -54),
+	Position = UDim2.new(0, 12, 0, 48),
+	BackgroundTransparency = 1,
+}, body)
+
+local pageTargets = mk("Frame", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1 }, pages)
+local pageSettings = mk("ScrollingFrame", {
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	ScrollBarThickness = 4,
+	ScrollBarImageColor3 = Color3.fromRGB(99, 102, 241),
+	CanvasSize = UDim2.new(0, 0, 0, 460),
+	Visible = false,
+}, pages)
+pageLogs = mk("Frame", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Visible = false }, pages)
+
+local tabBtns = {}
+local tabPages = { pageTargets, pageSettings, pageLogs }
+for i, name in ipairs({ "Цели", "Настройки", "Логи" }) do
+	local b = mk("TextButton", {
+		Size = UDim2.new(1 / 3, -4, 1, -4),
+		Position = UDim2.new((i - 1) / 3, 2, 0, 2),
+		BackgroundColor3 = i == 1 and Color3.fromRGB(79, 70, 229) or Color3.fromRGB(28, 33, 46),
+		BackgroundTransparency = i == 1 and 0.1 or 0.25,
+		Font = Enum.Font.GothamBold,
+		TextSize = 11,
+		TextColor3 = i == 1 and Color3.new(1, 1, 1) or Color3.fromRGB(148, 163, 184),
+		Text = name,
+	}, tabBar, 5)
+	tabBtns[i] = b
+	b.MouseButton1Click:Connect(function()
+		for j = 1, 3 do
+			local on = (j == i)
+			tabPages[j].Visible = on
+			tabBtns[j].BackgroundColor3 = on and Color3.fromRGB(79, 70, 229) or Color3.fromRGB(28, 33, 46)
+			tabBtns[j].BackgroundTransparency = on and 0.1 or 0.25
+			tabBtns[j].TextColor3 = on and Color3.new(1, 1, 1) or Color3.fromRGB(148, 163, 184)
+		end
+		if i == 3 then
+			scrollLogs()
+		end
+	end)
+end
+
+-- Вкладка 1: Цели
+local addRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 32), BackgroundTransparency = 1 }, pageTargets)
+
+local skinInput = mk("TextBox", {
+	Size = UDim2.new(0.55, -5, 1, 0),
+	BackgroundColor3 = Color3.fromRGB(22, 26, 36),
+	BackgroundTransparency = 0.2,
+	Font = Enum.Font.GothamMedium,
+	TextSize = 12,
+	TextColor3 = Color3.fromRGB(241, 245, 249),
+	PlaceholderColor3 = Color3.fromRGB(148, 163, 184),
+	PlaceholderText = "ID предмета (напр. Exotic.Rainbow.AWP)",
+	Text = "",
+	ClearTextOnFocus = false,
+}, addRow, 6, Color3.fromRGB(65, 76, 104))
+
+local priceInput = mk("TextBox", {
+	Size = UDim2.new(0.21, -5, 1, 0),
+	Position = UDim2.new(0.55, 2, 0, 0),
+	BackgroundColor3 = Color3.fromRGB(22, 26, 36),
+	BackgroundTransparency = 0.2,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	TextColor3 = Color3.fromRGB(125, 211, 252),
+	Text = "2000",
+	ClearTextOnFocus = false,
+}, addRow, 6, Color3.fromRGB(65, 76, 104))
+
+local addBtn = mk("TextButton", {
+	Size = UDim2.new(0.24, 0, 1, 0),
+	Position = UDim2.new(0.76, 0, 0, 0),
+	BackgroundColor3 = Color3.fromRGB(79, 70, 229),
+	BackgroundTransparency = 0.1,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	TextColor3 = Color3.new(1, 1, 1),
+	Text = "+ Добавить",
+}, addRow, 6)
+
+local bulkRow = mk("Frame", {
+	Size = UDim2.new(1, 0, 0, 28),
+	Position = UDim2.new(0, 0, 0, 36),
+	BackgroundColor3 = Color3.fromRGB(20, 24, 34),
+	BackgroundTransparency = 0.22,
+}, pageTargets, 6, Color3.fromRGB(58, 68, 94))
+
+mk("TextLabel", {
+	Size = UDim2.new(0.42, -8, 1, 0),
+	Position = UDim2.new(0, 10, 0, 0),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamMedium,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = Color3.fromRGB(165, 180, 204),
+	Text = "Цена для всех целей:",
+}, bulkRow)
+
+local bulkInput = mk("TextBox", {
+	Size = UDim2.new(0.16, -4, 0, 22),
+	Position = UDim2.new(0.42, 0, 0.5, -11),
+	BackgroundColor3 = Color3.fromRGB(15, 18, 26),
+	BackgroundTransparency = 0.22,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	TextColor3 = Color3.fromRGB(125, 211, 252),
+	Text = "2000",
+	ClearTextOnFocus = false,
+}, bulkRow, 5, Color3.fromRGB(65, 76, 104))
+
+mk("TextButton", {
+	Size = UDim2.new(0.20, -4, 0, 22),
+	Position = UDim2.new(0.58, 2, 0.5, -11),
+	BackgroundColor3 = Color3.fromRGB(30, 58, 95),
+	BackgroundTransparency = 0.14,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	TextColor3 = Color3.fromRGB(186, 230, 253),
+	Text = "Всем макс.",
+}, bulkRow, 5, Color3.fromRGB(76, 118, 172)).MouseButton1Click:Connect(function()
+	local n = tonumber(bulkInput.Text)
+	if not n or n <= 0 then
+		pushLog("Укажи цену > 0")
+		return
+	end
+	local c = 0
+	for k in pairs(State.targets) do
+		State.targets[k] = n
+		c += 1
+	end
+	refreshTargetsUI()
+	saveConfig()
+	pushLog(string.format("Цена %d применена к %d целям", n, c))
+end)
+
+mk("TextButton", {
+	Size = UDim2.new(0.22, -6, 0, 22),
+	Position = UDim2.new(0.78, 2, 0.5, -11),
+	BackgroundColor3 = Color3.fromRGB(67, 56, 202),
+	BackgroundTransparency = 0.14,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	TextColor3 = Color3.fromRGB(224, 231, 255),
+	Text = "Скины из кода",
+}, bulkRow, 5, Color3.fromRGB(129, 140, 248)).MouseButton1Click:Connect(function()
+	State.targets = cloneTargets(DEFAULT_TARGETS)
+	refreshTargetsUI()
+	saveConfig()
+	local count = 0
+	for _ in pairs(State.targets) do
+		count += 1
+	end
+	pushLog("Список скинов обновлён из кода (" .. count .. " шт.)")
+end)
+
+local targetList = mk("ScrollingFrame", {
+	Size = UDim2.new(1, 0, 1, -70),
+	Position = UDim2.new(0, 0, 0, 70),
+	BackgroundColor3 = Color3.fromRGB(19, 23, 33),
+	BackgroundTransparency = 0.24,
+	ScrollBarThickness = 4,
+	ScrollBarImageColor3 = Color3.fromRGB(99, 102, 241),
+	CanvasSize = UDim2.new(),
+}, pageTargets, 7, Color3.fromRGB(58, 68, 94))
+
+local targetLayout = mk("UIListLayout", { Padding = UDim.new(0, 4) }, targetList)
+mk("UIPadding", {
+	PaddingTop = UDim.new(0, 6),
+	PaddingBottom = UDim.new(0, 6),
+	PaddingLeft = UDim.new(0, 6),
+	PaddingRight = UDim.new(0, 6),
+}, targetList)
+
+refreshTargetsUI = function()
+	for _, c in ipairs(targetList:GetChildren()) do
+		if c:IsA("Frame") then
+			c:Destroy()
+		end
+	end
+	local keys = {}
+	for k in pairs(State.targets) do
+		table.insert(keys, k)
+	end
+	table.sort(keys)
+	for _, skin in ipairs(keys) do
+		local row = mk("Frame", {
+			Size = UDim2.new(1, -6, 0, 28),
+			BackgroundColor3 = Color3.fromRGB(26, 31, 43),
+			BackgroundTransparency = 0.22,
+		}, targetList, 6, Color3.fromRGB(62, 74, 102), 0.4)
+
+		mk("TextLabel", {
+			Size = UDim2.new(1, -155, 1, 0),
+			Position = UDim2.new(0, 10, 0, 0),
+			BackgroundTransparency = 1,
+			Font = Enum.Font.GothamMedium,
+			TextSize = 12,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			TextColor3 = Color3.fromRGB(226, 232, 240),
+			Text = skin,
+		}, row)
+
+		mk("TextLabel", {
+			Size = UDim2.new(0, 76, 0, 20),
+			Position = UDim2.new(1, -142, 0.5, -10),
+			BackgroundColor3 = Color3.fromRGB(20, 36, 52),
+			BackgroundTransparency = 0.18,
+			Font = Enum.Font.GothamBold,
+			TextSize = 11,
+			TextColor3 = Color3.fromRGB(125, 211, 252),
+			Text = "до " .. State.targets[skin],
+		}, row, 5)
+
+		mk("TextButton", {
+			Size = UDim2.new(0, 56, 0, 20),
+			Position = UDim2.new(1, -62, 0.5, -10),
+			BackgroundColor3 = Color3.fromRGB(153, 27, 27),
+			BackgroundTransparency = 0.14,
+			Font = Enum.Font.GothamBold,
+			TextSize = 10,
+			TextColor3 = Color3.fromRGB(254, 226, 226),
+			Text = "Удалить",
+		}, row, 5).MouseButton1Click:Connect(function()
+			State.targets[skin] = nil
+			refreshTargetsUI()
+			saveConfig()
+			pushLog("Удалена цель: " .. skin)
+		end)
+	end
+	targetList.CanvasSize = UDim2.new(0, 0, 0, targetLayout.AbsoluteContentSize.Y + 12)
+end
+
+addBtn.MouseButton1Click:Connect(function()
+	local name = string.match(skinInput.Text, "^%s*(.-)%s*$")
+	local p = tonumber(priceInput.Text)
+	if name and name ~= "" and p and p > 0 then
+		State.targets[name] = p
+		skinInput.Text = ""
+		refreshTargetsUI()
+		saveConfig()
+		pushLog(string.format("Добавлена цель: %s (до %d)", name, p))
+	else
+		pushLog("Укажи ID предмета и цену > 0")
+	end
+end)
+refreshTargetsUI()
+
+-- Вкладка 2: Настройки
+mk("UIListLayout", { Padding = UDim.new(0, 5) }, pageSettings)
+
+local function addToggle(txt, getV, setV)
+	local row = mk("Frame", {
+		Size = UDim2.new(1, -6, 0, 32),
+		BackgroundColor3 = Color3.fromRGB(22, 26, 36),
+		BackgroundTransparency = 0.2,
+	}, pageSettings, 6, Color3.fromRGB(58, 68, 94))
+
+	mk("TextLabel", {
+		Size = UDim2.new(0.7, -12, 1, 0),
+		Position = UDim2.new(0, 12, 0, 0),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextColor3 = Color3.fromRGB(226, 232, 240),
+		Text = txt,
+	}, row)
+
+	local b = mk("TextButton", {
+		Size = UDim2.new(0, 76, 0, 22),
+		Position = UDim2.new(1, -84, 0.5, -11),
+		BackgroundTransparency = 0.1,
+		Font = Enum.Font.GothamBold,
+		TextSize = 11,
+		TextColor3 = Color3.new(1, 1, 1),
+	}, row, 5)
+
+	local function paint()
+		local v = getV()
+		b.Text = v and "ВКЛ" or "ВЫКЛ"
+		b.BackgroundColor3 = v and Color3.fromRGB(34, 197, 94) or Color3.fromRGB(71, 85, 105)
+	end
+	paint()
+	table.insert(settingsRefreshers, paint)
+
+	b.MouseButton1Click:Connect(function()
+		setV(not getV())
+		paint()
+		saveConfig()
+	end)
+end
+
+local function addNumber(txt, getV, minV, maxV, setV, isInt)
+	local row = mk("Frame", {
+		Size = UDim2.new(1, -6, 0, 32),
+		BackgroundColor3 = Color3.fromRGB(22, 26, 36),
+		BackgroundTransparency = 0.2,
+	}, pageSettings, 6, Color3.fromRGB(58, 68, 94))
+
+	mk("TextLabel", {
+		Size = UDim2.new(0.7, -12, 1, 0),
+		Position = UDim2.new(0, 12, 0, 0),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextColor3 = Color3.fromRGB(226, 232, 240),
+		Text = txt,
+	}, row)
+
+	local box = mk("TextBox", {
+		Size = UDim2.new(0, 86, 0, 22),
+		Position = UDim2.new(1, -94, 0.5, -11),
+		BackgroundColor3 = Color3.fromRGB(16, 20, 29),
+		BackgroundTransparency = 0.2,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		TextColor3 = Color3.fromRGB(125, 211, 252),
+		ClearTextOnFocus = false,
+	}, row, 5, Color3.fromRGB(68, 80, 108))
+
+	local function paint()
+		box.Text = tostring(getV())
+	end
+	paint()
+	table.insert(settingsRefreshers, paint)
+
+	box.FocusLost:Connect(function()
+		local n = readNum(box.Text, minV, maxV, isInt)
+		if n then
+			setV(n)
+			saveConfig()
+		end
+		paint()
+	end)
+end
+
+-- Горячая клавиша
+do
+	local listening = false
+	local row = mk("Frame", {
+		Size = UDim2.new(1, -6, 0, 32),
+		BackgroundColor3 = Color3.fromRGB(22, 26, 36),
+		BackgroundTransparency = 0.2,
+	}, pageSettings, 6, Color3.fromRGB(58, 68, 94))
+
+	mk("TextLabel", {
+		Size = UDim2.new(0.65, -12, 1, 0),
+		Position = UDim2.new(0, 12, 0, 0),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextColor3 = Color3.fromRGB(226, 232, 240),
+		Text = "Скрыть / показать меню",
+	}, row)
+
+	local kb = mk("TextButton", {
+		Size = UDim2.new(0, 110, 0, 22),
+		Position = UDim2.new(1, -118, 0.5, -11),
+		BackgroundColor3 = Color3.fromRGB(49, 46, 129),
+		BackgroundTransparency = 0.12,
+		Font = Enum.Font.GothamBold,
+		TextSize = 11,
+		TextColor3 = Color3.fromRGB(224, 231, 255),
+	}, row, 5, Color3.fromRGB(115, 118, 255), 0.3)
+
+	local function paint()
+		kb.Text = listening and "Нажми клавишу..." or State.hotkey
+	end
+	paint()
+	table.insert(settingsRefreshers, paint)
+
+	kb.MouseButton1Click:Connect(function()
+		listening = true
+		paint()
+	end)
+
+	UIS.InputBegan:Connect(function(i, gp)
+		if not isActive() or i.UserInputType ~= Enum.UserInputType.Keyboard then
+			return
+		end
+		if listening and i.KeyCode ~= Enum.KeyCode.Unknown then
+			State.hotkey = i.KeyCode.Name
+			listening = false
+			paint()
+			saveConfig()
+			pushLog("Клавиша меню: " .. State.hotkey)
+		elseif not gp and i.KeyCode.Name == State.hotkey then
+			main.Visible = not main.Visible
+		end
+	end)
+end
+
+addToggle("Автопокупка (на текущем сервере)", function() return State.autoBuy end, function(v) State.autoBuy = v end)
+addToggle("Автотелепорт (по JobId)", function() return State.autoTeleport end, function(v) State.autoTeleport = v end)
+addToggle("Звук при покупке", function() return State.soundAlert end, function(v) State.soundAlert = v end)
+addNumber("Повторы покупки (0-5)", function() return State.buyRetries end, 0, 5, function(v) State.buyRetries = v end, true)
+addNumber("Кулдаун плохого TP (сек)", function() return State.tpCooldown end, 5, 3600, function(v) State.tpCooldown = v end)
+addNumber("Задержка на скин (сек)", function() return State.skinDelay end, 0.05, 60, function(v) State.skinDelay = v end)
+addNumber("Задержка цикла (сек)", function() return State.loopDelay end, 0.05, 60, function(v) State.loopDelay = v end)
+addNumber("Ожидание телепорта (сек)", function() return State.tpWait end, 1, 60, function(v) State.tpWait = v end)
+addNumber("Мин. цена (фильтр)", function() return State.minPrice end, 0, 1e8, function(v) State.minPrice = v end)
+
+local cfgRow = mk("Frame", { Size = UDim2.new(1, -6, 0, 32), BackgroundTransparency = 1 }, pageSettings)
+
+mk("TextButton", {
+	Size = UDim2.new(0.34, -4, 1, 0),
+	BackgroundColor3 = Color3.fromRGB(79, 70, 229),
+	BackgroundTransparency = 0.1,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	TextColor3 = Color3.new(1, 1, 1),
+	Text = "Сохранить",
+}, cfgRow, 6).MouseButton1Click:Connect(function()
+	saveConfig()
+	pushLog("Конфиг сохранён")
+end)
+
+mk("TextButton", {
+	Size = UDim2.new(0.33, -4, 1, 0),
+	Position = UDim2.new(0.34, 2, 0, 0),
+	BackgroundColor3 = Color3.fromRGB(28, 33, 46),
+	BackgroundTransparency = 0.2,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	TextColor3 = Color3.fromRGB(226, 232, 240),
+	Text = "Загрузить",
+}, cfgRow, 6, Color3.fromRGB(68, 80, 108)).MouseButton1Click:Connect(loadConfig)
+
+mk("TextButton", {
+	Size = UDim2.new(0.33, -2, 1, 0),
+	Position = UDim2.new(0.67, 2, 0, 0),
+	BackgroundColor3 = Color3.fromRGB(127, 29, 29),
+	BackgroundTransparency = 0.14,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	TextColor3 = Color3.fromRGB(254, 226, 226),
+	Text = "Сбросить",
+}, cfgRow, 6).MouseButton1Click:Connect(function()
 	State.autoBuy = true
 	State.autoTeleport = true
 	State.soundAlert = true
@@ -306,1111 +1057,321 @@ local function resetToDefaultConfig()
 	State.buyRetries = 1
 	State.minPrice = 1
 	State.prioritySkin = nil
+	State.priorityPasses = 0
 	State.foundCount = 0
 	State.boughtCount = 0
 	State.hotkey = "RightShift"
 	State.seenEntries = {}
 	State.seenOrder = {}
 	State.badJobIds = {}
+	State.failedEntryIds = {}
+	State.pendingLots = {}
 	State.targets = cloneTargets(DEFAULT_TARGETS)
-
-	if refreshTargetsUI then
-		refreshTargetsUI()
+	refreshTargetsUI()
+	for _, fn in ipairs(settingsRefreshers) do
+		fn()
 	end
-	refreshSettingsUI()
 	updateCounters()
 	saveConfig()
-	pushLog("Настройки и список целей сброшены к стандартным")
-end
-
-local function loadConfig()
-	if not hasFileIO() then
-		return false
-	end
-	local existsOk, exists = pcall(isfile, CONFIG_FILE)
-	if not existsOk or not exists then
-		return false
-	end
-	local rOk, raw = pcall(readfile, CONFIG_FILE)
-	if not rOk or type(raw) ~= "string" then
-		return false
-	end
-	local dOk, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
-	if dOk and type(decoded) == "table" then
-		if type(decoded.autoBuy) == "boolean" then State.autoBuy = decoded.autoBuy end
-		if type(decoded.autoTeleport) == "boolean" then State.autoTeleport = decoded.autoTeleport end
-		if type(decoded.soundAlert) == "boolean" then State.soundAlert = decoded.soundAlert end
-		if tonumber(decoded.skinDelay) then State.skinDelay = math.max(0.05, tonumber(decoded.skinDelay)) end
-		if tonumber(decoded.loopDelay) then State.loopDelay = math.max(0.05, tonumber(decoded.loopDelay)) end
-		if tonumber(decoded.tpWait) then State.tpWait = math.max(1, tonumber(decoded.tpWait)) end
-		if tonumber(decoded.tpCooldown) then State.tpCooldown = math.max(5, tonumber(decoded.tpCooldown)) end
-		if tonumber(decoded.buyRetries) then State.buyRetries = math.clamp(math.floor(tonumber(decoded.buyRetries)), 0, 5) end
-		if tonumber(decoded.minPrice) then State.minPrice = math.max(0, tonumber(decoded.minPrice)) end
-		if type(decoded.prioritySkin) == "string" and decoded.prioritySkin ~= "" then
-			State.prioritySkin = decoded.prioritySkin
-		end
-		if tonumber(decoded.foundCount) then State.foundCount = math.max(0, tonumber(decoded.foundCount)) end
-		if tonumber(decoded.boughtCount) then State.boughtCount = math.max(0, tonumber(decoded.boughtCount)) end
-		if type(decoded.hotkey) == "string" and Enum.KeyCode[decoded.hotkey] then
-			State.hotkey = decoded.hotkey
-		end
-
-		if type(decoded.seenOrder) == "table" then
-			State.seenEntries = {}
-			State.seenOrder = {}
-			for _, key in ipairs(decoded.seenOrder) do
-				if type(key) == "string" then
-					markEntrySeen(key)
-				end
-			end
-		end
-
-		if type(decoded.targets) == "table" then
-			local cleanTargets = {}
-			for k, v in pairs(decoded.targets) do
-				local num = tonumber(v)
-				if type(k) == "string" and k ~= "" and num and num > 0 then
-					cleanTargets[k] = num
-				end
-			end
-			if next(cleanTargets) ~= nil then
-				State.targets = cleanTargets
-			end
-		end
-
-		if refreshTargetsUI then
-			refreshTargetsUI()
-		end
-		refreshSettingsUI()
-		updateCounters()
-
-		local wasRunning = decoded.running == true
-		pushLog(string.format("Конфиг загружен | Найдено: %d | Куплено: %d", State.foundCount, State.boughtCount))
-		if State.prioritySkin then
-			pushLog("Приоритет после телепорта: " .. State.prioritySkin)
-		end
-		return wasRunning
-	end
-	return false
-end
-
-local function getSellerName(item)
-	if typeof(item.Seller) == "Instance" then
-		return item.Seller.Name
-	end
-	for _, field in ipairs({ "SellerName", "SellerDisplayName", "OwnerName", "PlayerName", "Username", "Seller" }) do
-		if type(item[field]) == "string" and item[field] ~= "" then
-			return item[field]
-		end
-	end
-	for _, idField in ipairs({ "SellerUserId", "OwnerId", "UserId", "PlayerId" }) do
-		local uid = tonumber(item[idField])
-		if uid then
-			local plr = Players:GetPlayerByUserId(uid)
-			if plr then
-				return plr.Name
-			end
-			return "ID:" .. tostring(uid)
-		end
-	end
-	return "Неизвестно"
-end
-
-local function findSellerPlayer(item)
-	if typeof(item.Seller) == "Instance" and item.Seller:IsA("Player") then
-		return item.Seller
-	end
-	for _, idField in ipairs({ "SellerUserId", "OwnerId", "UserId", "PlayerId" }) do
-		if item[idField] ~= nil then
-			local uid = tonumber(item[idField])
-			if uid then
-				return Players:GetPlayerByUserId(uid)
-			end
-		end
-	end
-	for _, nameField in ipairs({ "SellerName", "OwnerName", "PlayerName", "Seller" }) do
-		if type(item[nameField]) == "string" then
-			local plr = Players:FindFirstChild(item[nameField])
-			if plr then
-				return plr
-			end
-		end
-	end
-	return nil
-end
-
-local function invokeSearch(skinId)
-	return SearchIndex:InvokeServer(skinId, {})
-end
-
-local function invokePurchase(sellerPlayer, entryId)
-	return PurchaseRemote:InvokeServer(sellerPlayer, entryId)
-end
-
-local function invokeTeleport(jobId)
-	TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId, LocalPlayer)
-end
-
--- Удаление старых экземпляров UI перед запуском (Single Instance)
-local function getUiParent()
-	local coreOk, coreGui = pcall(function()
-		return game:GetService("CoreGui")
-	end)
-	if coreOk and coreGui then
-		local testOk = pcall(function()
-			local f = Instance.new("Folder")
-			f.Parent = coreGui
-			f:Destroy()
-		end)
-		if testOk then
-			return coreGui
-		end
-	end
-	return LocalPlayer:WaitForChild("PlayerGui")
-end
-
-local function cleanupPreviousUi()
-	local parent = getUiParent()
-	for _, obj in ipairs(parent:GetChildren()) do
-		if obj.Name == UI_NAME then
-			pcall(function()
-				obj:Destroy()
-			end)
-		end
-	end
-	local pg = LocalPlayer:FindFirstChild("PlayerGui")
-	if pg then
-		for _, obj in ipairs(pg:GetChildren()) do
-			if obj.Name == UI_NAME then
-				pcall(function()
-					obj:Destroy()
-				end)
-			end
-		end
-	end
-end
-
-cleanupPreviousUi()
-
-local function addStroke(parent, color, thickness, transparency)
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = color or Color3.fromRGB(65, 76, 104)
-	stroke.Thickness = thickness or 1
-	stroke.Transparency = transparency or 0.35
-	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-	stroke.Parent = parent
-	return stroke
-end
-
-local function addPadding(parent, top, right, bottom, left)
-	local pad = Instance.new("UIPadding")
-	pad.PaddingTop = UDim.new(0, top or 0)
-	pad.PaddingRight = UDim.new(0, right or 0)
-	pad.PaddingBottom = UDim.new(0, bottom or 0)
-	pad.PaddingLeft = UDim.new(0, left or 0)
-	pad.Parent = parent
-	return pad
-end
-
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = UI_NAME
-screenGui.ResetOnSpawn = false
-screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-screenGui.Parent = getUiParent()
-
-local mainFrame = Instance.new("Frame")
-mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 620, 0, 410)
-mainFrame.Position = UDim2.new(0.5, -310, 0.5, -205)
-mainFrame.BackgroundColor3 = Color3.fromRGB(16, 19, 26)
-mainFrame.BackgroundTransparency = 0.12
-mainFrame.BorderSizePixel = 0
-mainFrame.Active = true
-mainFrame.Parent = screenGui
-Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 10)
-addStroke(mainFrame, Color3.fromRGB(72, 84, 114), 1, 0.25)
-
--- Шапка
-local header = Instance.new("Frame")
-header.Name = "Header"
-header.Size = UDim2.new(1, 0, 0, 46)
-header.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
-header.BackgroundTransparency = 0.16
-header.BorderSizePixel = 0
-header.Parent = mainFrame
-Instance.new("UICorner", header).CornerRadius = UDim.new(0, 10)
-
-local accentBar = Instance.new("Frame")
-accentBar.Size = UDim2.new(0, 3, 0, 20)
-accentBar.Position = UDim2.new(0, 12, 0.5, -10)
-accentBar.BackgroundColor3 = Color3.fromRGB(99, 102, 241)
-accentBar.BorderSizePixel = 0
-accentBar.Parent = header
-Instance.new("UICorner", accentBar).CornerRadius = UDim.new(1, 0)
-
-local titleLabel = Instance.new("TextLabel")
-titleLabel.Size = UDim2.new(0, 155, 1, 0)
-titleLabel.Position = UDim2.new(0, 22, 0, 0)
-titleLabel.BackgroundTransparency = 1
-titleLabel.Font = Enum.Font.GothamBold
-titleLabel.TextSize = 12
-titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-titleLabel.TextColor3 = Color3.fromRGB(241, 245, 249)
-titleLabel.Text = "KIRRAA74 // МАРКЕТ"
-titleLabel.Parent = header
-
--- Счётчики + Сброс
-local counterPill = Instance.new("Frame")
-counterPill.Size = UDim2.new(0, 214, 0, 28)
-counterPill.Position = UDim2.new(1, -438, 0.5, -14)
-counterPill.BackgroundColor3 = Color3.fromRGB(28, 33, 46)
-counterPill.BackgroundTransparency = 0.2
-counterPill.BorderSizePixel = 0
-counterPill.Parent = header
-Instance.new("UICorner", counterPill).CornerRadius = UDim.new(0, 6)
-addStroke(counterPill, Color3.fromRGB(68, 80, 108), 1, 0.35)
-
-foundLabel = Instance.new("TextLabel")
-foundLabel.Size = UDim2.new(0, 82, 1, 0)
-foundLabel.Position = UDim2.new(0, 8, 0, 0)
-foundLabel.BackgroundTransparency = 1
-foundLabel.Font = Enum.Font.GothamBold
-foundLabel.TextSize = 11
-foundLabel.TextXAlignment = Enum.TextXAlignment.Left
-foundLabel.TextColor3 = Color3.fromRGB(125, 211, 252)
-foundLabel.Text = "Найдено: 0"
-foundLabel.Parent = counterPill
-
-boughtLabel = Instance.new("TextLabel")
-boughtLabel.Size = UDim2.new(0, 80, 1, 0)
-boughtLabel.Position = UDim2.new(0, 90, 0, 0)
-boughtLabel.BackgroundTransparency = 1
-boughtLabel.Font = Enum.Font.GothamBold
-boughtLabel.TextSize = 11
-boughtLabel.TextXAlignment = Enum.TextXAlignment.Left
-boughtLabel.TextColor3 = Color3.fromRGB(74, 222, 128)
-boughtLabel.Text = "Куплено: 0"
-boughtLabel.Parent = counterPill
-
-local resetFoundBtn = Instance.new("TextButton")
-resetFoundBtn.Size = UDim2.new(0, 40, 0, 20)
-resetFoundBtn.Position = UDim2.new(1, -44, 0.5, -10)
-resetFoundBtn.BackgroundColor3 = Color3.fromRGB(45, 55, 74)
-resetFoundBtn.BackgroundTransparency = 0.12
-resetFoundBtn.Font = Enum.Font.GothamBold
-resetFoundBtn.TextSize = 10
-resetFoundBtn.TextColor3 = Color3.fromRGB(248, 250, 252)
-resetFoundBtn.Text = "Сброс"
-resetFoundBtn.Parent = counterPill
-Instance.new("UICorner", resetFoundBtn).CornerRadius = UDim.new(0, 5)
-resetFoundBtn.MouseButton1Click:Connect(resetFoundCounter)
-
--- Статус
-local statusPill = Instance.new("Frame")
-statusPill.Size = UDim2.new(0, 104, 0, 28)
-statusPill.Position = UDim2.new(1, -218, 0.5, -14)
-statusPill.BackgroundColor3 = Color3.fromRGB(28, 33, 46)
-statusPill.BackgroundTransparency = 0.2
-statusPill.BorderSizePixel = 0
-statusPill.Parent = header
-Instance.new("UICorner", statusPill).CornerRadius = UDim.new(0, 6)
-addStroke(statusPill, Color3.fromRGB(68, 80, 108), 1, 0.35)
-
-statusDot = Instance.new("Frame")
-statusDot.Size = UDim2.new(0, 7, 0, 7)
-statusDot.Position = UDim2.new(0, 9, 0.5, -3.5)
-statusDot.BackgroundColor3 = Color3.fromRGB(148, 163, 184)
-statusDot.BorderSizePixel = 0
-statusDot.Parent = statusPill
-Instance.new("UICorner", statusDot).CornerRadius = UDim.new(1, 0)
-
-statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(1, -22, 1, 0)
-statusLabel.Position = UDim2.new(0, 20, 0, 0)
-statusLabel.BackgroundTransparency = 1
-statusLabel.Font = Enum.Font.GothamBold
-statusLabel.TextSize = 10
-statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-statusLabel.TextTruncate = Enum.TextTruncate.AtEnd
-statusLabel.TextColor3 = Color3.fromRGB(148, 163, 184)
-statusLabel.Text = "ПАУЗА"
-statusLabel.Parent = statusPill
-
-toggleRunBtn = Instance.new("TextButton")
-toggleRunBtn.Size = UDim2.new(0, 72, 0, 28)
-toggleRunBtn.Position = UDim2.new(1, -108, 0.5, -14)
-toggleRunBtn.BackgroundColor3 = Color3.fromRGB(34, 197, 94)
-toggleRunBtn.BackgroundTransparency = 0.08
-toggleRunBtn.Font = Enum.Font.GothamBold
-toggleRunBtn.TextSize = 11
-toggleRunBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-toggleRunBtn.Text = "СТАРТ"
-toggleRunBtn.Parent = header
-Instance.new("UICorner", toggleRunBtn).CornerRadius = UDim.new(0, 6)
-
-local minBtn = Instance.new("TextButton")
-minBtn.Size = UDim2.new(0, 26, 0, 28)
-minBtn.Position = UDim2.new(1, -30, 0.5, -14)
-minBtn.BackgroundColor3 = Color3.fromRGB(32, 38, 52)
-minBtn.BackgroundTransparency = 0.18
-minBtn.Font = Enum.Font.GothamBold
-minBtn.TextSize = 14
-minBtn.TextColor3 = Color3.fromRGB(226, 232, 240)
-minBtn.Text = "—"
-minBtn.Parent = header
-Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0, 6)
-addStroke(minBtn, Color3.fromRGB(68, 80, 108), 1, 0.35)
-
--- Перетаскивание окна
-do
-	local dragging = false
-	local dragStart
-	local startPos
-
-	header.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			dragging = true
-			dragStart = input.Position
-			startPos = mainFrame.Position
-		end
-	end)
-
-	header.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			dragging = false
-		end
-	end)
-
-	UserInputService.InputChanged:Connect(function(input)
-		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-			local delta = input.Position - dragStart
-			mainFrame.Position = UDim2.new(
-				startPos.X.Scale,
-				startPos.X.Offset + delta.X,
-				startPos.Y.Scale,
-				startPos.Y.Offset + delta.Y
-			)
-		end
-	end)
-end
-
--- Тело окна и вкладки
-local bodyFrame = Instance.new("Frame")
-bodyFrame.Size = UDim2.new(1, 0, 1, -46)
-bodyFrame.Position = UDim2.new(0, 0, 0, 46)
-bodyFrame.BackgroundTransparency = 1
-bodyFrame.Parent = mainFrame
-
-local tabBar = Instance.new("Frame")
-tabBar.Size = UDim2.new(1, -24, 0, 32)
-tabBar.Position = UDim2.new(0, 12, 0, 10)
-tabBar.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
-tabBar.BackgroundTransparency = 0.2
-tabBar.Parent = bodyFrame
-Instance.new("UICorner", tabBar).CornerRadius = UDim.new(0, 7)
-addStroke(tabBar, Color3.fromRGB(62, 74, 102), 1, 0.35)
-
-local function makeTabButton(text, index, count)
-	local btn = Instance.new("TextButton")
-	btn.Size = UDim2.new(1 / count, -4, 1, -4)
-	btn.Position = UDim2.new((index - 1) / count, 2, 0, 2)
-	local active = (index == 1)
-	btn.BackgroundColor3 = active and Color3.fromRGB(79, 70, 229) or Color3.fromRGB(28, 33, 46)
-	btn.BackgroundTransparency = active and 0.1 or 0.25
-	btn.Font = Enum.Font.GothamBold
-	btn.TextSize = 11
-	btn.TextColor3 = active and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(148, 163, 184)
-	btn.Text = text
-	btn.Parent = tabBar
-	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
-	return btn
-end
-
-local tabTargetsBtn = makeTabButton("Цели", 1, 3)
-local tabSettingsBtn = makeTabButton("Настройки", 2, 3)
-local tabLogsBtn = makeTabButton("Логи", 3, 3)
-
-local pagesContainer = Instance.new("Frame")
-pagesContainer.Size = UDim2.new(1, -24, 1, -54)
-pagesContainer.Position = UDim2.new(0, 12, 0, 48)
-pagesContainer.BackgroundTransparency = 1
-pagesContainer.Parent = bodyFrame
-
-local pageTargets = Instance.new("Frame")
-pageTargets.Size = UDim2.new(1, 0, 1, 0)
-pageTargets.BackgroundTransparency = 1
-pageTargets.Visible = true
-pageTargets.Parent = pagesContainer
-
-local pageSettings = Instance.new("ScrollingFrame")
-pageSettings.Size = UDim2.new(1, 0, 1, 0)
-pageSettings.BackgroundTransparency = 1
-pageSettings.ScrollBarThickness = 4
-pageSettings.ScrollBarImageColor3 = Color3.fromRGB(99, 102, 241)
-pageSettings.CanvasSize = UDim2.new(0, 0, 0, 500)
-pageSettings.Visible = false
-pageSettings.Parent = pagesContainer
-
-pageLogs = Instance.new("Frame")
-pageLogs.Size = UDim2.new(1, 0, 1, 0)
-pageLogs.BackgroundTransparency = 1
-pageLogs.Visible = false
-pageLogs.Parent = pagesContainer
-
-local function switchTab(activeIndex)
-	pageTargets.Visible = (activeIndex == 1)
-	pageSettings.Visible = (activeIndex == 2)
-	pageLogs.Visible = (activeIndex == 3)
-
-	local tabs = { tabTargetsBtn, tabSettingsBtn, tabLogsBtn }
-	for i, b in ipairs(tabs) do
-		local active = (i == activeIndex)
-		b.BackgroundColor3 = active and Color3.fromRGB(79, 70, 229) or Color3.fromRGB(28, 33, 46)
-		b.BackgroundTransparency = active and 0.1 or 0.25
-		b.TextColor3 = active and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(148, 163, 184)
-	end
-
-	if activeIndex == 3 then
-		scrollLogsToBottom()
-	end
-end
-
-tabTargetsBtn.MouseButton1Click:Connect(function() switchTab(1) end)
-tabSettingsBtn.MouseButton1Click:Connect(function() switchTab(2) end)
-tabLogsBtn.MouseButton1Click:Connect(function() switchTab(3) end)
-
--- Вкладка 1: Цели
-local addRow = Instance.new("Frame")
-addRow.Size = UDim2.new(1, 0, 0, 32)
-addRow.BackgroundTransparency = 1
-addRow.Parent = pageTargets
-
-local skinInput = Instance.new("TextBox")
-skinInput.Size = UDim2.new(0.55, -5, 1, 0)
-skinInput.Position = UDim2.new(0, 0, 0, 0)
-skinInput.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
-skinInput.BackgroundTransparency = 0.2
-skinInput.Font = Enum.Font.GothamMedium
-skinInput.TextSize = 12
-skinInput.TextColor3 = Color3.fromRGB(241, 245, 249)
-skinInput.PlaceholderColor3 = Color3.fromRGB(148, 163, 184)
-skinInput.PlaceholderText = "ID предмета (напр. Exotic.Rainbow.AWP)"
-skinInput.Text = ""
-skinInput.ClearTextOnFocus = false
-skinInput.Parent = addRow
-Instance.new("UICorner", skinInput).CornerRadius = UDim.new(0, 6)
-addStroke(skinInput, Color3.fromRGB(65, 76, 104), 1, 0.35)
-addPadding(skinInput, 0, 10, 0, 10)
-
-local priceInput = Instance.new("TextBox")
-priceInput.Size = UDim2.new(0.21, -5, 1, 0)
-priceInput.Position = UDim2.new(0.55, 2, 0, 0)
-priceInput.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
-priceInput.BackgroundTransparency = 0.2
-priceInput.Font = Enum.Font.GothamBold
-priceInput.TextSize = 12
-priceInput.TextColor3 = Color3.fromRGB(125, 211, 252)
-priceInput.PlaceholderColor3 = Color3.fromRGB(148, 163, 184)
-priceInput.PlaceholderText = "Макс. цена"
-priceInput.Text = "2000"
-priceInput.ClearTextOnFocus = false
-priceInput.Parent = addRow
-Instance.new("UICorner", priceInput).CornerRadius = UDim.new(0, 6)
-addStroke(priceInput, Color3.fromRGB(65, 76, 104), 1, 0.35)
-addPadding(priceInput, 0, 8, 0, 8)
-
-local addBtn = Instance.new("TextButton")
-addBtn.Size = UDim2.new(0.24, 0, 1, 0)
-addBtn.Position = UDim2.new(0.76, 0, 0, 0)
-addBtn.BackgroundColor3 = Color3.fromRGB(79, 70, 229)
-addBtn.BackgroundTransparency = 0.1
-addBtn.Font = Enum.Font.GothamBold
-addBtn.TextSize = 12
-addBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-addBtn.Text = "+ Добавить"
-addBtn.Parent = addRow
-Instance.new("UICorner", addBtn).CornerRadius = UDim.new(0, 6)
-
--- Массовое изменение цены для всех целей
-local bulkRow = Instance.new("Frame")
-bulkRow.Size = UDim2.new(1, 0, 0, 28)
-bulkRow.Position = UDim2.new(0, 0, 0, 36)
-bulkRow.BackgroundColor3 = Color3.fromRGB(20, 24, 34)
-bulkRow.BackgroundTransparency = 0.22
-bulkRow.Parent = pageTargets
-Instance.new("UICorner", bulkRow).CornerRadius = UDim.new(0, 6)
-addStroke(bulkRow, Color3.fromRGB(58, 68, 94), 1, 0.35)
-
-local bulkLabel = Instance.new("TextLabel")
-bulkLabel.Size = UDim2.new(0.55, -8, 1, 0)
-bulkLabel.Position = UDim2.new(0, 10, 0, 0)
-bulkLabel.BackgroundTransparency = 1
-bulkLabel.Font = Enum.Font.GothamMedium
-bulkLabel.TextSize = 11
-bulkLabel.TextXAlignment = Enum.TextXAlignment.Left
-bulkLabel.TextColor3 = Color3.fromRGB(165, 180, 204)
-bulkLabel.Text = "Цена для всех целей сразу:"
-bulkLabel.Parent = bulkRow
-
-local bulkPriceInput = Instance.new("TextBox")
-bulkPriceInput.Size = UDim2.new(0.21, -5, 0, 22)
-bulkPriceInput.Position = UDim2.new(0.55, 2, 0.5, -11)
-bulkPriceInput.BackgroundColor3 = Color3.fromRGB(15, 18, 26)
-bulkPriceInput.BackgroundTransparency = 0.22
-bulkPriceInput.Font = Enum.Font.GothamBold
-bulkPriceInput.TextSize = 11
-bulkPriceInput.TextColor3 = Color3.fromRGB(125, 211, 252)
-bulkPriceInput.Text = "2000"
-bulkPriceInput.ClearTextOnFocus = false
-bulkPriceInput.Parent = bulkRow
-Instance.new("UICorner", bulkPriceInput).CornerRadius = UDim.new(0, 5)
-addStroke(bulkPriceInput, Color3.fromRGB(65, 76, 104), 1, 0.35)
-
-local bulkApplyBtn = Instance.new("TextButton")
-bulkApplyBtn.Size = UDim2.new(0.24, -4, 0, 22)
-bulkApplyBtn.Position = UDim2.new(0.76, 0, 0.5, -11)
-bulkApplyBtn.BackgroundColor3 = Color3.fromRGB(30, 58, 95)
-bulkApplyBtn.BackgroundTransparency = 0.14
-bulkApplyBtn.Font = Enum.Font.GothamBold
-bulkApplyBtn.TextSize = 11
-bulkApplyBtn.TextColor3 = Color3.fromRGB(186, 230, 253)
-bulkApplyBtn.Text = "Всем макс."
-bulkApplyBtn.Parent = bulkRow
-Instance.new("UICorner", bulkApplyBtn).CornerRadius = UDim.new(0, 5)
-addStroke(bulkApplyBtn, Color3.fromRGB(76, 118, 172), 1, 0.35)
-
-bulkApplyBtn.MouseButton1Click:Connect(function()
-	local newMax = tonumber(bulkPriceInput.Text)
-	if not newMax or newMax <= 0 then
-		pushLog("Укажи корректную общую цену > 0")
-		return
-	end
-	local count = 0
-	for skinName in pairs(State.targets) do
-		State.targets[skinName] = newMax
-		count += 1
-	end
-	refreshTargetsUI()
-	saveConfig()
-	pushLog(string.format("Обновлена цена до %d для %d целей", newMax, count))
-end)
-
-local targetList = Instance.new("ScrollingFrame")
-targetList.Size = UDim2.new(1, 0, 1, -70)
-targetList.Position = UDim2.new(0, 0, 0, 70)
-targetList.BackgroundColor3 = Color3.fromRGB(19, 23, 33)
-targetList.BackgroundTransparency = 0.24
-targetList.ScrollBarThickness = 4
-targetList.ScrollBarImageColor3 = Color3.fromRGB(99, 102, 241)
-targetList.CanvasSize = UDim2.new(0, 0, 0, 0)
-targetList.Parent = pageTargets
-Instance.new("UICorner", targetList).CornerRadius = UDim.new(0, 7)
-addStroke(targetList, Color3.fromRGB(58, 68, 94), 1, 0.35)
-addPadding(targetList, 6, 6, 6, 6)
-
-local targetLayout = Instance.new("UIListLayout")
-targetLayout.Padding = UDim.new(0, 4)
-targetLayout.Parent = targetList
-
-refreshTargetsUI = function()
-	for _, child in ipairs(targetList:GetChildren()) do
-		if child:IsA("Frame") then
-			child:Destroy()
-		end
-	end
-
-	local keys = {}
-	for k in pairs(State.targets) do
-		table.insert(keys, k)
-	end
-	table.sort(keys)
-
-	for _, skinName in ipairs(keys) do
-		local maxP = State.targets[skinName]
-		local row = Instance.new("Frame")
-		row.Size = UDim2.new(1, -6, 0, 28)
-		row.BackgroundColor3 = Color3.fromRGB(26, 31, 43)
-		row.BackgroundTransparency = 0.22
-		row.Parent = targetList
-		Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
-		addStroke(row, Color3.fromRGB(62, 74, 102), 1, 0.4)
-
-		local lbl = Instance.new("TextLabel")
-		lbl.Size = UDim2.new(1, -155, 1, 0)
-		lbl.Position = UDim2.new(0, 10, 0, 0)
-		lbl.BackgroundTransparency = 1
-		lbl.Font = Enum.Font.GothamMedium
-		lbl.TextSize = 12
-		lbl.TextXAlignment = Enum.TextXAlignment.Left
-		lbl.TextTruncate = Enum.TextTruncate.AtEnd
-		lbl.TextColor3 = Color3.fromRGB(226, 232, 240)
-		lbl.Text = skinName
-		lbl.Parent = row
-
-		local priceTag = Instance.new("TextLabel")
-		priceTag.Size = UDim2.new(0, 76, 0, 20)
-		priceTag.Position = UDim2.new(1, -142, 0.5, -10)
-		priceTag.BackgroundColor3 = Color3.fromRGB(20, 36, 52)
-		priceTag.BackgroundTransparency = 0.18
-		priceTag.Font = Enum.Font.GothamBold
-		priceTag.TextSize = 11
-		priceTag.TextColor3 = Color3.fromRGB(125, 211, 252)
-		priceTag.Text = "до " .. tostring(maxP)
-		priceTag.Parent = row
-		Instance.new("UICorner", priceTag).CornerRadius = UDim.new(0, 5)
-
-		local delBtn = Instance.new("TextButton")
-		delBtn.Size = UDim2.new(0, 56, 0, 20)
-		delBtn.Position = UDim2.new(1, -62, 0.5, -10)
-		delBtn.BackgroundColor3 = Color3.fromRGB(153, 27, 27)
-		delBtn.BackgroundTransparency = 0.14
-		delBtn.Font = Enum.Font.GothamBold
-		delBtn.TextSize = 10
-		delBtn.TextColor3 = Color3.fromRGB(254, 226, 226)
-		delBtn.Text = "Удалить"
-		delBtn.Parent = row
-		Instance.new("UICorner", delBtn).CornerRadius = UDim.new(0, 5)
-
-		delBtn.MouseButton1Click:Connect(function()
-			State.targets[skinName] = nil
-			refreshTargetsUI()
-			saveConfig()
-			pushLog("Удалена цель: " .. skinName)
-		end)
-	end
-
-	targetList.CanvasSize = UDim2.new(0, 0, 0, targetLayout.AbsoluteContentSize.Y + 12)
-end
-
-addBtn.MouseButton1Click:Connect(function()
-	local name = string.match(skinInput.Text, "^%s*(.-)%s*$")
-	local pNum = tonumber(priceInput.Text)
-	if name and name ~= "" and pNum and pNum > 0 then
-		State.targets[name] = pNum
-		skinInput.Text = ""
-		refreshTargetsUI()
-		saveConfig()
-		pushLog(string.format("Добавлена цель: %s (до %d)", name, pNum))
-	else
-		pushLog("Укажи корректный ID предмета и цену > 0")
-	end
-end)
-
-refreshTargetsUI()
-
--- Вкладка 2: Настройки
-local settingsLayout = Instance.new("UIListLayout")
-settingsLayout.Padding = UDim.new(0, 5)
-settingsLayout.Parent = pageSettings
-
-local function createToggleRow(labelText, getValue, onChange)
-	local row = Instance.new("Frame")
-	row.Size = UDim2.new(1, -6, 0, 32)
-	row.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
-	row.BackgroundTransparency = 0.2
-	row.Parent = pageSettings
-	Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
-	addStroke(row, Color3.fromRGB(58, 68, 94), 1, 0.35)
-
-	local lbl = Instance.new("TextLabel")
-	lbl.Size = UDim2.new(0.7, -12, 1, 0)
-	lbl.Position = UDim2.new(0, 12, 0, 0)
-	lbl.BackgroundTransparency = 1
-	lbl.Font = Enum.Font.GothamMedium
-	lbl.TextSize = 12
-	lbl.TextXAlignment = Enum.TextXAlignment.Left
-	lbl.TextColor3 = Color3.fromRGB(226, 232, 240)
-	lbl.Text = labelText
-	lbl.Parent = row
-
-	local btn = Instance.new("TextButton")
-	btn.Size = UDim2.new(0, 76, 0, 22)
-	btn.Position = UDim2.new(1, -84, 0.5, -11)
-	btn.BackgroundTransparency = 0.1
-	btn.Font = Enum.Font.GothamBold
-	btn.TextSize = 11
-	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-	btn.Parent = row
-	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
-
-	local function paint()
-		local active = getValue()
-		btn.Text = active and "ВКЛ" or "ВЫКЛ"
-		btn.BackgroundColor3 = active and Color3.fromRGB(34, 197, 94) or Color3.fromRGB(71, 85, 105)
-	end
-	paint()
-	table.insert(settingsRefreshers, paint)
-
-	btn.MouseButton1Click:Connect(function()
-		onChange(not getValue())
-		paint()
-		saveConfig()
-	end)
-end
-
-local function createNumberRow(labelText, getValue, minVal, maxVal, onChange)
-	local row = Instance.new("Frame")
-	row.Size = UDim2.new(1, -6, 0, 32)
-	row.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
-	row.BackgroundTransparency = 0.2
-	row.Parent = pageSettings
-	Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
-	addStroke(row, Color3.fromRGB(58, 68, 94), 1, 0.35)
-
-	local lbl = Instance.new("TextLabel")
-	lbl.Size = UDim2.new(0.7, -12, 1, 0)
-	lbl.Position = UDim2.new(0, 12, 0, 0)
-	lbl.BackgroundTransparency = 1
-	lbl.Font = Enum.Font.GothamMedium
-	lbl.TextSize = 12
-	lbl.TextXAlignment = Enum.TextXAlignment.Left
-	lbl.TextColor3 = Color3.fromRGB(226, 232, 240)
-	lbl.Text = labelText
-	lbl.Parent = row
-
-	local box = Instance.new("TextBox")
-	box.Size = UDim2.new(0, 86, 0, 22)
-	box.Position = UDim2.new(1, -94, 0.5, -11)
-	box.BackgroundColor3 = Color3.fromRGB(16, 20, 29)
-	box.BackgroundTransparency = 0.2
-	box.Font = Enum.Font.GothamBold
-	box.TextSize = 12
-	box.TextColor3 = Color3.fromRGB(125, 211, 252)
-	box.Text = tostring(getValue())
-	box.ClearTextOnFocus = false
-	box.Parent = row
-	Instance.new("UICorner", box).CornerRadius = UDim.new(0, 5)
-	addStroke(box, Color3.fromRGB(68, 80, 108), 1, 0.35)
-
-	local function paint()
-		box.Text = tostring(getValue())
-	end
-	table.insert(settingsRefreshers, paint)
-
-	box.FocusLost:Connect(function()
-		local num = tonumber(box.Text)
-		if num then
-			if minVal then num = math.max(minVal, num) end
-			if maxVal then num = math.min(maxVal, num) end
-			onChange(num)
-			saveConfig()
-		end
-		paint()
-	end)
-end
-
--- Горячая клавиша скрытия UI
-local listeningHotkey = false
-do
-	local row = Instance.new("Frame")
-	row.Size = UDim2.new(1, -6, 0, 32)
-	row.BackgroundColor3 = Color3.fromRGB(22, 26, 36)
-	row.BackgroundTransparency = 0.2
-	row.Parent = pageSettings
-	Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
-	addStroke(row, Color3.fromRGB(58, 68, 94), 1, 0.35)
-
-	local lbl = Instance.new("TextLabel")
-	lbl.Size = UDim2.new(0.65, -12, 1, 0)
-	lbl.Position = UDim2.new(0, 12, 0, 0)
-	lbl.BackgroundTransparency = 1
-	lbl.Font = Enum.Font.GothamMedium
-	lbl.TextSize = 12
-	lbl.TextXAlignment = Enum.TextXAlignment.Left
-	lbl.TextColor3 = Color3.fromRGB(226, 232, 240)
-	lbl.Text = "Скрыть / показать меню"
-	lbl.Parent = row
-
-	local keyBtn = Instance.new("TextButton")
-	keyBtn.Size = UDim2.new(0, 110, 0, 22)
-	keyBtn.Position = UDim2.new(1, -118, 0.5, -11)
-	keyBtn.BackgroundColor3 = Color3.fromRGB(49, 46, 129)
-	keyBtn.BackgroundTransparency = 0.12
-	keyBtn.Font = Enum.Font.GothamBold
-	keyBtn.TextSize = 11
-	keyBtn.TextColor3 = Color3.fromRGB(224, 231, 255)
-	keyBtn.Parent = row
-	Instance.new("UICorner", keyBtn).CornerRadius = UDim.new(0, 5)
-	addStroke(keyBtn, Color3.fromRGB(115, 118, 255), 1, 0.3)
-
-	local function paintKey()
-		keyBtn.Text = listeningHotkey and "Нажми клавишу..." or State.hotkey
-	end
-	paintKey()
-	table.insert(settingsRefreshers, paintKey)
-
-	keyBtn.MouseButton1Click:Connect(function()
-		listeningHotkey = true
-		paintKey()
-	end)
-
-	UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if not isActiveInstance() then
-			return
-		end
-		if listeningHotkey and input.UserInputType == Enum.UserInputType.Keyboard then
-			if input.KeyCode ~= Enum.KeyCode.Unknown then
-				State.hotkey = input.KeyCode.Name
-				listeningHotkey = false
-				paintKey()
-				saveConfig()
-				pushLog("Клавиша меню изменена на: " .. State.hotkey)
-			end
-			return
-		end
-
-		if not gameProcessed and input.UserInputType == Enum.UserInputType.Keyboard then
-			if input.KeyCode.Name == State.hotkey then
-				mainFrame.Visible = not mainFrame.Visible
-			end
-		end
-	end)
-end
-
-createToggleRow("Автопокупка (на текущем сервере)", function() return State.autoBuy end, function(v) State.autoBuy = v end)
-createToggleRow("Автотелепорт (по JobId)", function() return State.autoTeleport end, function(v) State.autoTeleport = v end)
-createToggleRow("Звук при покупке", function() return State.soundAlert end, function(v) State.soundAlert = v end)
-createNumberRow("Повторы покупки (0-5)", function() return State.buyRetries end, 0, 5, function(v) State.buyRetries = math.floor(v) end)
-createNumberRow("Кулдаун плохого TP (сек)", function() return State.tpCooldown end, 5, 3600, function(v) State.tpCooldown = v end)
-createNumberRow("Задержка на скин (сек)", function() return State.skinDelay end, 0.05, 60, function(v) State.skinDelay = v end)
-createNumberRow("Задержка цикла (сек)", function() return State.loopDelay end, 0.05, 60, function(v) State.loopDelay = v end)
-createNumberRow("Ожидание телепорта (сек)", function() return State.tpWait end, 1, 60, function(v) State.tpWait = v end)
-createNumberRow("Мин. цена (фильтр)", function() return State.minPrice end, 0, 100000000, function(v) State.minPrice = v end)
-
-local cfgRow = Instance.new("Frame")
-cfgRow.Size = UDim2.new(1, -6, 0, 32)
-cfgRow.BackgroundTransparency = 1
-cfgRow.Parent = pageSettings
-
-local saveCfgBtn = Instance.new("TextButton")
-saveCfgBtn.Size = UDim2.new(0.34, -4, 1, 0)
-saveCfgBtn.Position = UDim2.new(0, 0, 0, 0)
-saveCfgBtn.BackgroundColor3 = Color3.fromRGB(79, 70, 229)
-saveCfgBtn.BackgroundTransparency = 0.1
-saveCfgBtn.Font = Enum.Font.GothamBold
-saveCfgBtn.TextSize = 11
-saveCfgBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-saveCfgBtn.Text = "Сохранить"
-saveCfgBtn.Parent = cfgRow
-Instance.new("UICorner", saveCfgBtn).CornerRadius = UDim.new(0, 6)
-
-local loadCfgBtn = Instance.new("TextButton")
-loadCfgBtn.Size = UDim2.new(0.33, -4, 1, 0)
-loadCfgBtn.Position = UDim2.new(0.34, 2, 0, 0)
-loadCfgBtn.BackgroundColor3 = Color3.fromRGB(28, 33, 46)
-loadCfgBtn.BackgroundTransparency = 0.2
-loadCfgBtn.Font = Enum.Font.GothamBold
-loadCfgBtn.TextSize = 11
-loadCfgBtn.TextColor3 = Color3.fromRGB(226, 232, 240)
-loadCfgBtn.Text = "Загрузить"
-loadCfgBtn.Parent = cfgRow
-Instance.new("UICorner", loadCfgBtn).CornerRadius = UDim.new(0, 6)
-addStroke(loadCfgBtn, Color3.fromRGB(68, 80, 108), 1, 0.35)
-
-local defaultCfgBtn = Instance.new("TextButton")
-defaultCfgBtn.Size = UDim2.new(0.33, -2, 1, 0)
-defaultCfgBtn.Position = UDim2.new(0.67, 2, 0, 0)
-defaultCfgBtn.BackgroundColor3 = Color3.fromRGB(127, 29, 29)
-defaultCfgBtn.BackgroundTransparency = 0.14
-defaultCfgBtn.Font = Enum.Font.GothamBold
-defaultCfgBtn.TextSize = 11
-defaultCfgBtn.TextColor3 = Color3.fromRGB(254, 226, 226)
-defaultCfgBtn.Text = "Сбросить"
-defaultCfgBtn.Parent = cfgRow
-Instance.new("UICorner", defaultCfgBtn).CornerRadius = UDim.new(0, 6)
-
-saveCfgBtn.MouseButton1Click:Connect(function()
-	saveConfig()
-	pushLog("Конфиг сохранён вручную")
-end)
-
-loadCfgBtn.MouseButton1Click:Connect(function()
-	loadConfig()
-end)
-
-defaultCfgBtn.MouseButton1Click:Connect(function()
-	resetToDefaultConfig()
+	pushLog("Настройки сброшены к стандартным")
 end)
 
 -- Вкладка 3: Логи
-local clearLogsBtn = Instance.new("TextButton")
-clearLogsBtn.Size = UDim2.new(0, 110, 0, 26)
-clearLogsBtn.Position = UDim2.new(1, -110, 0, 0)
-clearLogsBtn.BackgroundColor3 = Color3.fromRGB(28, 33, 46)
-clearLogsBtn.BackgroundTransparency = 0.2
-clearLogsBtn.Font = Enum.Font.GothamBold
-clearLogsBtn.TextSize = 11
-clearLogsBtn.TextColor3 = Color3.fromRGB(226, 232, 240)
-clearLogsBtn.Text = "Очистить логи"
-clearLogsBtn.Parent = pageLogs
-Instance.new("UICorner", clearLogsBtn).CornerRadius = UDim.new(0, 6)
-addStroke(clearLogsBtn, Color3.fromRGB(68, 80, 108), 1, 0.35)
-
-logScroll = Instance.new("ScrollingFrame")
-logScroll.Size = UDim2.new(1, 0, 1, -32)
-logScroll.Position = UDim2.new(0, 0, 0, 32)
-logScroll.BackgroundColor3 = Color3.fromRGB(14, 17, 24)
-logScroll.BackgroundTransparency = 0.14
-logScroll.ScrollBarThickness = 4
-logScroll.ScrollBarImageColor3 = Color3.fromRGB(99, 102, 241)
-logScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-logScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-logScroll.Parent = pageLogs
-Instance.new("UICorner", logScroll).CornerRadius = UDim.new(0, 7)
-addStroke(logScroll, Color3.fromRGB(58, 68, 94), 1, 0.35)
-
-logLabel = Instance.new("TextLabel")
-logLabel.Size = UDim2.new(1, -14, 0, 0)
-logLabel.Position = UDim2.new(0, 8, 0, 6)
-logLabel.AutomaticSize = Enum.AutomaticSize.Y
-logLabel.BackgroundTransparency = 1
-logLabel.Font = Enum.Font.Code
-logLabel.TextSize = 11
-logLabel.TextXAlignment = Enum.TextXAlignment.Left
-logLabel.TextYAlignment = Enum.TextYAlignment.Top
-logLabel.TextWrapped = true
-logLabel.TextColor3 = Color3.fromRGB(203, 213, 225)
-logLabel.Text = ""
-logLabel.Parent = logScroll
-
-clearLogsBtn.MouseButton1Click:Connect(function()
+mk("TextButton", {
+	Size = UDim2.new(0, 110, 0, 26),
+	Position = UDim2.new(1, -110, 0, 0),
+	BackgroundColor3 = Color3.fromRGB(28, 33, 46),
+	BackgroundTransparency = 0.2,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	TextColor3 = Color3.fromRGB(226, 232, 240),
+	Text = "Очистить логи",
+}, pageLogs, 6, Color3.fromRGB(68, 80, 108)).MouseButton1Click:Connect(function()
 	logLabel.Text = ""
-	if logScroll then
-		logScroll.CanvasPosition = Vector2.new(0, 0)
-	end
+	logScroll.CanvasPosition = Vector2.new()
 end)
 
--- Управление запуском и сворачиванием
+logScroll = mk("ScrollingFrame", {
+	Size = UDim2.new(1, 0, 1, -32),
+	Position = UDim2.new(0, 0, 0, 32),
+	BackgroundColor3 = Color3.fromRGB(14, 17, 24),
+	BackgroundTransparency = 0.14,
+	ScrollBarThickness = 4,
+	ScrollBarImageColor3 = Color3.fromRGB(99, 102, 241),
+	CanvasSize = UDim2.new(),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+}, pageLogs, 7, Color3.fromRGB(58, 68, 94))
+
+logLabel = mk("TextLabel", {
+	Size = UDim2.new(1, -14, 0, 0),
+	Position = UDim2.new(0, 8, 0, 6),
+	AutomaticSize = Enum.AutomaticSize.Y,
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Code,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	TextWrapped = true,
+	TextColor3 = Color3.fromRGB(203, 213, 225),
+	Text = "",
+}, logScroll)
+
 toggleRunBtn.MouseButton1Click:Connect(function()
-	local nextState = not State.running
-	setRunning(nextState, true)
-	pushLog(nextState and "Цикл запущен (Kirraa74)" or "Цикл остановлен")
+	local n = not State.running
+	setRunning(n, true)
+	pushLog(n and "Цикл запущен (Kirraa74)" or "Цикл остановлен")
 end)
 
 local minimized = false
 minBtn.MouseButton1Click:Connect(function()
 	minimized = not minimized
-	bodyFrame.Visible = not minimized
-	mainFrame.Size = minimized and UDim2.new(0, 620, 0, 46) or UDim2.new(0, 620, 0, 410)
+	body.Visible = not minimized
+	main.Size = minimized and UDim2.new(0, 620, 0, 46) or UDim2.new(0, 620, 0, 410)
 	minBtn.Text = minimized and "+" or "—"
 end)
 
--- Формирование очереди целей с учётом приоритетного скина после телепорта
-local function buildScanQueue()
-	local queue = {}
-	if State.prioritySkin and State.targets[State.prioritySkin] ~= nil then
-		table.insert(queue, { skinId = State.prioritySkin, maxPrice = State.targets[State.prioritySkin] })
-	end
-	for skinId, maxPrice in pairs(State.targets) do
-		if skinId ~= State.prioritySkin then
-			table.insert(queue, { skinId = skinId, maxPrice = maxPrice })
+-- Логика очереди, покупок и телепортов
+local function buildQueue()
+	local q = {}
+	local added = {}
+	local function add(skin)
+		if skin and State.targets[skin] and not added[skin] then
+			added[skin] = true
+			table.insert(q, { skinId = skin, maxPrice = State.targets[skin] })
 		end
 	end
-	return queue
+	for _, p in pairs(State.pendingLots) do
+		add(p.skinId)
+	end
+	add(State.prioritySkin)
+	for skin in pairs(State.targets) do
+		add(skin)
+	end
+	return q
 end
 
--- Основной цикл работы
+local function hasPending()
+	local now = os.clock()
+	for key, info in pairs(State.pendingLots) do
+		if now - info.createdAt > MAX_LOT_WAIT then
+			State.pendingLots[key] = nil
+			State.failedEntryIds[key] = now + FAILED_COOLDOWN
+			pushLog("Таймаут (95с): " .. tostring(info.skinId))
+		else
+			return true
+		end
+	end
+	return false
+end
+
+local function tryBuyLot(skinId, price, item, key)
+	if isCooldown(State.failedEntryIds, key) then
+		return "failed"
+	end
+	local seller = findSeller(item)
+	if not seller or item.EntryId == nil then
+		State.failedEntryIds[key] = os.clock() + FAILED_COOLDOWN
+		State.pendingLots[key] = nil
+		return "failed"
+	end
+
+	local now = os.clock()
+	local pend = State.pendingLots[key]
+	if pend and now < pend.nextTryAt then
+		setStatus("ЖДУ " .. math.max(1, math.ceil(MAX_LOT_WAIT - (now - pend.createdAt))) .. "с", Color3.fromRGB(251, 191, 36))
+		return "wait"
+	end
+
+	setStatus("ПОКУПКА", Color3.fromRGB(167, 139, 250))
+	local attempts = pend and 1 or (State.buyRetries + 1)
+	local bought = false
+	local lastRes = nil
+
+	for i = 1, attempts do
+		local ok, res = pcall(PurchaseRemote.InvokeServer, PurchaseRemote, seller, item.EntryId)
+		lastRes = res
+		if ok and res ~= false and res ~= nil then
+			bought = true
+			break
+		end
+		if i < attempts then
+			task.wait(0.25)
+		end
+	end
+
+	if bought then
+		State.boughtCount += 1
+		State.pendingLots[key] = nil
+		State.failedEntryIds[key] = now + FAILED_COOLDOWN
+		if State.prioritySkin == skinId then
+			State.prioritySkin = nil
+			State.priorityPasses = 0
+		end
+		updateCounters()
+		saveConfig()
+		if State.soundAlert then
+			pcall(alertSound.Play, alertSound)
+		end
+		pushLog(string.format("КУПЛЕНО: %s | %d | %s", skinId, price, seller.Name))
+		setStatus("ПОИСК", Color3.fromRGB(125, 211, 252))
+		return "bought"
+	end
+
+	if not pend then
+		State.pendingLots[key] = {
+			skinId = skinId,
+			createdAt = now,
+			nextTryAt = now + PENDING_RETRY,
+		}
+		pushLog(string.format("Жду таймер (до %dс, раз в 0.5с): %s за %d у %s", MAX_LOT_WAIT, skinId, price, seller.Name))
+		setStatus("ЖДУ ТАЙМЕР", Color3.fromRGB(251, 191, 36))
+		return "wait"
+	end
+
+	if now - pend.createdAt < MAX_LOT_WAIT then
+		pend.nextTryAt = now + PENDING_RETRY
+		setStatus("ЖДУ " .. math.max(1, math.ceil(MAX_LOT_WAIT - (now - pend.createdAt))) .. "с", Color3.fromRGB(251, 191, 36))
+		return "wait"
+	end
+
+	State.pendingLots[key] = nil
+	State.failedEntryIds[key] = now + FAILED_COOLDOWN
+	pushLog(string.format("Не куплено за %dс: %s (%s)", MAX_LOT_WAIT, skinId, tostring(lastRes)))
+	setStatus("ПОИСК", Color3.fromRGB(125, 211, 252))
+	return "failed"
+end
+
+local function smartTeleport(skinId, jobId)
+	setStatus("ТЕЛЕПОРТ", Color3.fromRGB(250, 204, 21))
+	State.prioritySkin = skinId
+	State.priorityPasses = 0
+	saveConfig(true)
+	State.running = false
+
+	local initJob = game.JobId
+	local tpFailed = false
+	local reason = ""
+
+	local conn = TS.TeleportInitFailed:Connect(function(p, res, msg)
+		if p == LP then
+			tpFailed = true
+			reason = tostring(res) .. (msg ~= "" and (": " .. msg) or "")
+		end
+	end)
+
+	local ok, err = pcall(TS.TeleportToPlaceInstance, TS, game.PlaceId, jobId, LP)
+	if not ok then
+		conn:Disconnect()
+		State.badJobIds[jobId] = os.clock() + State.tpCooldown
+		setRunning(true, false)
+		pushLog("Ошибка TP: " .. tostring(err))
+		return
+	end
+
+	pushLog("Телепорт -> " .. skinId .. " (" .. jobId .. ")")
+	local deadline = os.clock() + State.tpWait
+	while os.clock() < deadline and isActive() and not tpFailed and game.JobId == initJob do
+		task.wait(0.15)
+	end
+	conn:Disconnect()
+
+	if isActive() and game.JobId == initJob then
+		State.badJobIds[jobId] = os.clock() + State.tpCooldown
+		setRunning(true, false)
+		pushLog(tpFailed and ("TP отклонён: " .. reason) or "TP не сработал, JobId на кулдауне")
+	end
+end
+
+-- Основной цикл
 task.spawn(function()
-	while isActiveInstance() do
+	while isActive() do
 		if State.running then
-			local queue = buildScanQueue()
-			for _, entry in ipairs(queue) do
-				if not isActiveInstance() or not State.running then
+			for _, entry in ipairs(buildQueue()) do
+				if not isActive() or not State.running then
 					break
 				end
-
 				local skinId = entry.skinId
 				local maxPrice = entry.maxPrice
+				local boughtLocal = false
+				local waitingLocal = false
 
 				setStatus("ПОИСК", Color3.fromRGB(125, 211, 252))
-				local ok, results = pcall(invokeSearch, skinId)
-
-				if not isActiveInstance() then
+				local ok, results = pcall(SearchIndex.InvokeServer, SearchIndex, skinId, {})
+				if not isActive() then
 					break
 				end
 
 				if ok and type(results) == "table" then
-					for _, item in pairs(results) do
-						if not isActiveInstance() or not State.running then
-							break
-						end
+					local localLots = {}
+					local remoteLots = {}
+					local activeKeys = {}
 
+					for _, item in pairs(results) do
 						local price = type(item) == "table" and tonumber(item.Price) or nil
 						if price and price >= State.minPrice and price <= maxPrice then
-							setStatus("НАЙДЕН", Color3.fromRGB(52, 211, 153))
-							local entryKey = item.EntryId ~= nil and tostring(item.EntryId)
-								or (skinId .. "_" .. tostring(price) .. "_" .. tostring(item.JobId))
-							local sellerLabel = getSellerName(item)
-
-							if markEntrySeen(entryKey) then
+							local key = item.EntryId ~= nil and tostring(item.EntryId) or (skinId .. "_" .. price .. "_" .. tostring(item.JobId))
+							if markSeen(key) then
 								State.foundCount += 1
 								updateCounters()
 								saveConfig()
-								pushLog(string.format("НАЙДЕНО: %s | %d | Продавец: %s", skinId, price, sellerLabel))
+								pushLog(string.format("НАЙДЕНО: %s | %d | %s", skinId, price, getSellerName(item)))
 							end
-
-							if type(item.JobId) == "string" and item.JobId ~= "" and item.JobId ~= game.JobId then
-								if State.autoTeleport then
-									if isJobCoolingDown(item.JobId) then
-										pushLog("Пропуск JobId на кулдауне: " .. item.JobId)
-									else
-										setStatus("ТЕЛЕПОРТ", Color3.fromRGB(250, 204, 21))
-										State.prioritySkin = skinId
-										saveConfig(true)
-										State.running = false
-										local tpOk, tpErr = pcall(invokeTeleport, item.JobId)
-										if tpOk then
-											pushLog("Телепорт -> " .. skinId .. " (" .. item.JobId .. ")")
-											task.wait(State.tpWait)
-											if not isActiveInstance() then
-												break
-											end
-											markJobBad(item.JobId)
-											setRunning(true, false)
-											pushLog("Телепорт не сработал, JobId на кулдауне")
-										else
-											markJobBad(item.JobId)
-											setRunning(true, false)
-											pushLog("Ошибка телепорта: " .. tostring(tpErr))
-										end
-									end
+							local isLocal = type(item.JobId) ~= "string" or item.JobId == "" or item.JobId == game.JobId
+							if isLocal then
+								activeKeys[key] = true
+								if not isCooldown(State.failedEntryIds, key) then
+									table.insert(localLots, { item = item, price = price, key = key })
 								end
 							else
-								if State.autoBuy then
-									local sellerPlayer = findSellerPlayer(item)
-									if sellerPlayer and item.EntryId ~= nil then
-										setStatus("ПОКУПКА", Color3.fromRGB(167, 139, 250))
-										local attempts = State.buyRetries + 1
-										local boughtOk = false
-										local lastRes = nil
+								table.insert(remoteLots, { item = item, price = price, key = key })
+							end
+						end
+					end
 
-										for attempt = 1, attempts do
-											local buyOk, buyRes = pcall(invokePurchase, sellerPlayer, item.EntryId)
-											lastRes = buyRes
-											if buyOk and buyRes ~= false and buyRes ~= nil then
-												boughtOk = true
-												break
-											end
-											if attempt < attempts then
-												task.wait(0.25)
-											end
-										end
+					for pKey, pInfo in pairs(State.pendingLots) do
+						if pInfo.skinId == skinId and not activeKeys[pKey] then
+							State.pendingLots[pKey] = nil
+							pushLog("Отложенный лот пропал: " .. skinId)
+						end
+					end
 
-										if boughtOk then
-											State.boughtCount += 1
-											if State.prioritySkin == skinId then
-												State.prioritySkin = nil
-											end
-											updateCounters()
-											saveConfig()
-											playAlert()
-											pushLog(string.format("КУПЛЕНО: %s | %d | Продавец: %s", skinId, price, sellerPlayer.Name))
-										else
-											pushLog(string.format("Не куплено %s у %s (%s)", skinId, sellerPlayer.Name, tostring(lastRes)))
-										end
-										setStatus("ПОИСК", Color3.fromRGB(125, 211, 252))
-									end
-								end
+					table.sort(localLots, function(a, b)
+						return a.price < b.price
+					end)
+					table.sort(remoteLots, function(a, b)
+						return a.price < b.price
+					end)
+
+					if State.autoBuy then
+						for _, lot in ipairs(localLots) do
+							if not isActive() or not State.running then
+								break
+							end
+							local res = tryBuyLot(skinId, lot.price, lot.item, lot.key)
+							if res == "bought" then
+								boughtLocal = true
+							elseif res == "wait" then
+								waitingLocal = true
+							end
+						end
+					end
+
+					if State.prioritySkin == skinId and not boughtLocal and not waitingLocal and #localLots == 0 then
+						State.priorityPasses += 1
+						if State.priorityPasses >= 2 then
+							pushLog("Приоритет сброшен: " .. skinId)
+							State.prioritySkin = nil
+							State.priorityPasses = 0
+							saveConfig()
+						end
+					end
+
+					if isActive() and State.running and not boughtLocal and not waitingLocal and not hasPending() and State.autoTeleport then
+						for _, lot in ipairs(remoteLots) do
+							local jid = lot.item.JobId
+							if type(jid) == "string" and jid ~= "" and jid ~= game.JobId and not isCooldown(State.badJobIds, jid) then
+								smartTeleport(skinId, jid)
+								break
 							end
 						end
 					end
@@ -1418,29 +1379,29 @@ task.spawn(function()
 					pushLog("Ошибка поиска (" .. skinId .. "): " .. tostring(results))
 				end
 
-				if not isActiveInstance() or not State.running then
+				if not isActive() or not State.running or hasPending() then
 					break
 				end
-				task.wait(State.skinDelay)
+				task.wait(jitter(State.skinDelay))
 			end
 
-			if isActiveInstance() and State.running then
-				setStatus("ОЖИДАНИЕ", Color3.fromRGB(148, 163, 184))
+			if isActive() and State.running then
+				setStatus(
+					hasPending() and "ЖДУ ТАЙМЕР" or "ОЖИДАНИЕ",
+					hasPending() and Color3.fromRGB(251, 191, 36) or Color3.fromRGB(148, 163, 184)
+				)
 			end
 		end
-
-		task.wait(State.loopDelay)
+		task.wait(hasPending() and PENDING_RETRY or jitter(State.loopDelay))
 	end
 end)
 
--- Автовосстановление сессии при старте
 pushLog("UI инициализирован. Автор: Kirraa74")
-local shouldAutoStart = loadConfig()
-if shouldAutoStart then
+if loadConfig() then
 	task.delay(2, function()
-		if isActiveInstance() then
+		if isActive() then
 			setRunning(true, false)
-			pushLog("Автозапуск цикла после загрузки сервера")
+			pushLog("Автозапуск после загрузки сервера")
 		end
 	end)
 end
