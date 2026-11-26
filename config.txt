@@ -1,0 +1,98 @@
+# ====================================================================
+# ЕДИНЫЙ ФАЙЛ НАСТРОЙКИ (редактируй только этот файл!)
+# ====================================================================
+
+[SETTINGS]
+# Ник основного аккаунта в Roblox (Roblox Username)
+MAIN_ACCOUNT = ВПИШИ_НИК_ОСНОВЫ
+
+# Путь к папке инжектора (где лежат папки autoexec и workspace).
+# Оставь AUTO — программа найдёт инжектор сама (или спросит путь 1 раз).
+EXECUTOR_DIR = AUTO
+
+# Максимальное время ожидания на 1 твинка (в секундах)
+MAX_WAIT_SECONDS = 75
+
+# Пауза между переключением аккаунтов (в секундах).
+# Рекомендуется 7-8 сек, чтобы инжектор успевал стабильно цеплять новое окно.
+PAUSE_BETWEEN_ACCS = 7
+
+# Сколько секунд ждать инжект скрипта на твинке (если не заинжектилось — сразу перезапуск)
+INJECT_TIMEOUT = 25
+
+# Сколько раз перезапускать твинка при краше Roblox, отсутствии инжекта или срыве трейда
+MAX_RETRIES = 2
+
+[ACCOUNTS]
+# Впиши твинков по одному на строку.
+# Поддерживаются форматы:
+#   логин пароль
+#   логин:пароль
+#   логин:пароль:cookie
+# Пример (удали # в начале строки):
+# AltAccount1 MyPassword123
+
+[SKINS]
+# Список скинов и максимальная цена покупки (формат: ID_скина = цена).
+# Эти скины основа покупает и выдаёт твинкам, а твинки перерабатывают их в Cash.
+Exotic.Rainbow.AWP = 2000
+Exotic.Rainbow.AX-50 = 2000
+Exotic.Rainbow.Crossbow = 2000
+Exotic.Rainbow.DSR1 = 2000
+Exotic.Rainbow.GM6 = 2000
+Exotic.Rainbow.Kar98k = 2000
+Exotic.Rainbow.Lucas = 2000
+Exotic.Rainbow.M200 = 2000
+Exotic.Rainbow.M82A1 = 2000
+Exotic.Rainbow.Marlin = 2000
+Exotic.Rainbow.NTW20 = 2000
+Exotic.Rainbow.R11 = 2000
+Exotic.Rainbow.Specter = 2000
+Exotic.Rainbow.SSG = 2000
+Exotic.Rainbow.WA2000 = 2000
+Exotic.Prismatica_Solstice.M82A1 = 6000
+Exotic.Eternium.Lucas = 2000
+Exotic.Flarion.Lucas = 2000
+Exotic.NeonCore_Cyan.NTW20 = 2000
+Exotic.NeonCore_Purple.NTW20 = 2000
+Exotic.NeonCore_Holo.NTW20 = 2000
+Exotic.Hacker.AWP = 2000
+Exotic.Hacker_Red.AWP = 2000
+Exotic.Hacker_Purple.AWP = 2000
+Exotic.Hacker.M82A1 = 2000
+Exotic.Hacker_Red.M82A1 = 2000
+Exotic.Hacker_Purple.M82A1 = 2000
+Exotic.Hacker.Specter = 2000
+Exotic.Hacker_Red.Specter = 2000
+Exotic.Hacker_Purple.Specter = 2000
+Exotic.Hacker.Marlin = 2000
+Exotic.Hacker_Red.Marlin = 2000
+Exotic.Hacker_Purple.Marlin = 2000
+Exotic.Hacker.Wakizashi = 2000
+Exotic.Hacker_Red.Wakizashi = 2000
+Exotic.Hacker_Purple.Wakizashi = 2000
+Exotic.Hacker.Karambit = 2000
+Exotic.Hacker_Red.Karambit = 2000
+Exotic.Hacker_Purple.Karambit = 2000
+Exotic.Hacker.Glove = 2000
+Exotic.Hacker_Red.Glove = 2000
+Exotic.Hacker_Purple.Glove = 2000
+Exotic.Hacker.Punisher = 2000
+Exotic.Hacker_Purple.Punisher = 2000
+Exotic.Hacker_Red.Punisher = 2000
+Exotic.Starborne.Punisher = 2000
+Exotic.Starry.Punisher = 2000
+Exotic.Starlight.Punisher = 2000
+Exotic.Starfade.Punisher = 2000
+Exotic.Starember.Punisher = 2000
+Exotic.NeonCore_Cyan.Punisher = 2000
+Exotic.NeonCore_Holo.Punisher = 2000
+Exotic.NeonCore_Purple.Punisher = 2000
+Exotic.AbyssPrism.M82A1 = 2000
+Exotic.Starember.GM6 = 2000
+Exotic.Starry.WA2000 = 2000
+Exotic.US_2026_Black.R11 = 2000
+Exotic.US_2026_Black.M82A1 = 2000
+Exotic.Starfade.ButterflyKnife = 2000
+Exotic.Starfade.AWP = 2000
+Exotic.NeonCore_Holo.Fan = 2000
